@@ -12,6 +12,7 @@ fn get_func_name(func_index: FuncIndex) -> ir::ExternalName {
     ir::ExternalName::user(0, func_index.as_u32())
 }
 
+#[derive(Debug)]
 pub struct Exportable<T> {
     /// A wasm entity.
     pub entity: T,
@@ -33,18 +34,20 @@ impl<T> Exportable<T> {
     }
 }
 
-struct ModuleInfo {
+#[derive(Debug)]
+pub struct ModuleInfo {
     /// TypeID -> Type
-    fun_types: PrimaryMap<TypeIndex, ir::Signature>,
+    pub fun_types: PrimaryMap<TypeIndex, ir::Signature>,
     /// FunID -> TypeID
-    funs: PrimaryMap<FuncIndex, Exportable<TypeIndex>>,
+    pub funs: PrimaryMap<FuncIndex, Exportable<TypeIndex>>,
     /// Function bodies
-    fun_bodies: PrimaryMap<DefinedFuncIndex, ir::Function>,
+    pub fun_bodies: PrimaryMap<DefinedFuncIndex, ir::Function>,
 }
 
 pub struct ModuleEnvironment {
-    info: ModuleInfo,
+    pub info: ModuleInfo,
     target_config: TargetFrontendConfig,
+    translator: wasm::FuncTranslator,
 }
 
 impl ModuleEnvironment {
@@ -58,6 +61,7 @@ impl ModuleEnvironment {
         Self {
             info,
             target_config,
+            translator: wasm::FuncTranslator::new(),
         }
     }
 
@@ -224,14 +228,17 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
 
     fn define_function_body(
         &mut self,
-        validator: wasm::wasmparser::FuncValidator<wasm::wasmparser::ValidatorResources>,
+        mut validator: wasm::wasmparser::FuncValidator<wasm::wasmparser::ValidatorResources>,
         body: wasm::wasmparser::FunctionBody<'data>,
     ) -> wasm::WasmResult<()> {
-        let func_env = self.get_fun_env();
-        let func_index = FuncIndex::new(self.info.fun_bodies.len());
-        let name = get_func_name(func_index);
-        let sig = self.get_fun_type(func_index);
-        let func = ir::Function::with_name_signature(name, sig.clone());
+        let mut fun_env = self.get_fun_env();
+        let fun_index = FuncIndex::new(self.info.fun_bodies.len());
+        let name = get_func_name(fun_index);
+        let sig = self.get_fun_type(fun_index);
+        let mut fun = ir::Function::with_name_signature(name, sig.clone());
+        self.translator
+            .translate_body(&mut validator, body, &mut fun, &mut fun_env)?;
+        self.info.fun_bodies.push(fun);
         Ok(())
     }
 
