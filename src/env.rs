@@ -101,7 +101,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
                 WasmType::FuncRef | WasmType::ExternRef | WasmType::ExnRef => reference_type,
             })
         };
-        let mut sig = ir::Signature::new(CallConv::Fast);
+        let mut sig = ir::Signature::new(CallConv::SystemV);
         sig.params
             .extend(wasm_func_type.params().iter().map(&mut wasm_to_ir));
         sig.returns

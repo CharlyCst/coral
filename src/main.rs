@@ -1,3 +1,4 @@
+#![feature(asm)]
 use std::fs;
 
 use cranelift_codegen::isa;
@@ -74,4 +75,29 @@ fn main() {
     };
     let len = info.total_size;
     println!("Code size: {:?}", len);
+
+    // Great, now let's try to call that function by hand
+    unsafe {
+        let entry_point = TEXT_SECTION.0.as_ptr();
+        let rip: u64;
+        asm!(
+            "leaq 0(%rip), {}", out(reg) rip, options(att_syntax)
+        );
+        println!("Current address: 0x{:x}", rip);
+        println!("Target address:  {:p}", entry_point);
+        let offset = entry_point as u64 - rip;
+        println!("Offset:          0x{:x}", offset);
+
+        let a: u32 = 2;
+        let b: u32 = 3;
+        let c: u32;
+        asm!(
+            "call "
+        );
+    }
+
+    // let bytes = unsafe { std::slice::from_raw_parts(TEXT_SECTION.0.as_ptr(), len as usize) };
+    // use std::io::Write;
+    // let mut file = std::fs::File::create("a.out").unwrap();
+    // file.write(bytes).unwrap();
 }
