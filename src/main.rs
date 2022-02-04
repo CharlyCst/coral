@@ -78,7 +78,16 @@ fn main() {
 
     // Great, now let's try to call that function by hand
     unsafe {
-        let entry_point = TEXT_SECTION.0.as_ptr();
+        use libc;
+
+        // Preparing an executable region
+        let entry_point = TEXT_SECTION.0.as_mut_ptr();
+        libc::mprotect(
+            entry_point as *mut libc::c_void,
+            TEXT_SECTION.0.len(),
+            libc::PROT_READ | libc::PROT_EXEC | libc::PROT_EXEC,
+        );
+
         let rip: u64;
         asm!(
             "leaq 0(%rip), {}", out(reg) rip, options(att_syntax)
@@ -91,9 +100,15 @@ fn main() {
         let a: u32 = 2;
         let b: u32 = 3;
         let c: u32;
+        let addr: u64 = entry_point as u64;
         asm!(
-            "call "
+            "call {entry_point}",
+            entry_point = in(reg) addr,
+            in("rdi") a,
+            in("rsi") b,
+            out("rax") c,
         );
+        println!("{} + {} = {}", a, b, c);
     }
 
     // let bytes = unsafe { std::slice::from_raw_parts(TEXT_SECTION.0.as_ptr(), len as usize) };

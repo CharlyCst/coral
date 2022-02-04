@@ -11,3 +11,6 @@ edition = "2018"
 cranelift-wasm = "0.80.0"
 cranelift-codegen = "0.80.0"
 cranelift-entity = "0.80.0"
+
+# Libc
+libc = "0.2.117"
