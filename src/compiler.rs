@@ -58,9 +58,9 @@ impl traits::Compiler for X86_64Compiler {
         let mut stack_maps: Box<dyn cranelift_codegen::binemit::StackMapSink> =
             Box::new(cranelift_codegen::binemit::NullStackMapSink {});
 
-        for (_fun_idx, fun) in self.module.info.fun_bodies.into_iter() {
+        for (_, (fun, fun_idx)) in self.module.info.fun_bodies.into_iter() {
+            // Compile and emit to memory
             let mut ctx = cranelift_codegen::Context::for_function(fun);
-
             let code_info = ctx.compile(&*self.target_isa).unwrap();
             let code_size = code_info.total_size as usize;
             let code_ptr = alloc.alloc_code(code_size);
@@ -68,10 +68,13 @@ impl traits::Compiler for X86_64Compiler {
                 ctx.emit_to_memory(code_ptr, &mut *relocs, &mut *traps, &mut *stack_maps)
             };
 
-            // TODO: only append if the function is marked as exposed
-            mod_info
-                .funs
-                .insert(String::from("add"), FunctionInfo { ptr: code_ptr });
+            // Export the function, if required
+            let fun_info = &self.module.info.funs[fun_idx];
+            for name in &fun_info.export_names {
+                mod_info
+                    .funs
+                    .insert(name.to_owned(), FunctionInfo { ptr: code_ptr });
+            }
         }
 
         Ok(mod_info)

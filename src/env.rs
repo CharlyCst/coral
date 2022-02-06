@@ -41,7 +41,7 @@ pub struct ModuleInfo {
     /// FunID -> TypeID
     pub funs: PrimaryMap<FuncIndex, Exportable<TypeIndex>>,
     /// Function bodies
-    pub fun_bodies: PrimaryMap<DefinedFuncIndex, ir::Function>,
+    pub fun_bodies: PrimaryMap<DefinedFuncIndex, (ir::Function, FuncIndex)>,
 }
 
 pub struct ModuleEnvironment {
@@ -238,7 +238,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         let mut fun = ir::Function::with_name_signature(name, sig.clone());
         self.translator
             .translate_body(&mut validator, body, &mut fun, &mut fun_env)?;
-        self.info.fun_bodies.push(fun);
+        self.info.fun_bodies.push((fun, fun_index));
         Ok(())
     }
 
