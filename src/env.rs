@@ -34,7 +34,6 @@ impl<T> Exportable<T> {
     }
 }
 
-#[derive(Debug)]
 pub struct ModuleInfo {
     /// TypeID -> Type
     pub fun_types: PrimaryMap<TypeIndex, ir::Signature>,
@@ -42,11 +41,26 @@ pub struct ModuleInfo {
     pub funs: PrimaryMap<FuncIndex, Exportable<TypeIndex>>,
     /// Function bodies
     pub fun_bodies: PrimaryMap<DefinedFuncIndex, (ir::Function, FuncIndex)>,
+    // Configuration of the target
+    target_config: TargetFrontendConfig,
+}
+
+impl ModuleInfo {
+    fn get_func_sig(&self, fun_index: FuncIndex) -> &ir::Signature {
+        let type_idx = self.funs[fun_index].entity;
+        &self.fun_types[type_idx]
+    }
+
+    fn get_fun_env(&self) -> FunctionEnvironment {
+        FunctionEnvironment {
+            target_config: self.target_config,
+            info: self,
+        }
+    }
 }
 
 pub struct ModuleEnvironment {
     pub info: ModuleInfo,
-    target_config: TargetFrontendConfig,
     translator: wasm::FuncTranslator,
 }
 
@@ -56,30 +70,19 @@ impl ModuleEnvironment {
             fun_types: PrimaryMap::new(),
             funs: PrimaryMap::new(),
             fun_bodies: PrimaryMap::new(),
+            target_config,
         };
 
         Self {
             info,
-            target_config,
             translator: wasm::FuncTranslator::new(),
         }
-    }
-
-    fn get_fun_env(&self) -> FunctionEnvironment {
-        FunctionEnvironment {
-            target_config: self.target_config,
-        }
-    }
-
-    fn get_fun_type(&self, fun_index: FuncIndex) -> &ir::Signature {
-        let type_idx = self.info.funs[fun_index].entity;
-        &self.info.fun_types[type_idx]
     }
 }
 
 impl TargetEnvironment for ModuleEnvironment {
     fn target_config(&self) -> TargetFrontendConfig {
-        self.target_config
+        self.info.target_config
     }
 }
 
@@ -231,14 +234,14 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         mut validator: wasm::wasmparser::FuncValidator<wasm::wasmparser::ValidatorResources>,
         body: wasm::wasmparser::FunctionBody<'data>,
     ) -> wasm::WasmResult<()> {
-        let mut fun_env = self.get_fun_env();
-        let fun_index = FuncIndex::new(self.info.fun_bodies.len());
-        let name = get_func_name(fun_index);
-        let sig = self.get_fun_type(fun_index);
+        let mut fun_env = self.info.get_fun_env();
+        let func_index = FuncIndex::new(self.info.fun_bodies.len());
+        let name = get_func_name(func_index);
+        let sig = self.info.get_func_sig(func_index);
         let mut fun = ir::Function::with_name_signature(name, sig.clone());
         self.translator
             .translate_body(&mut validator, body, &mut fun, &mut fun_env)?;
-        self.info.fun_bodies.push((fun, fun_index));
+        self.info.fun_bodies.push((fun, func_index));
         Ok(())
     }
 
@@ -253,17 +256,18 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
     }
 }
 
-struct FunctionEnvironment {
+struct FunctionEnvironment<'info> {
     target_config: TargetFrontendConfig,
+    info: &'info ModuleInfo,
 }
 
-impl wasm::TargetEnvironment for FunctionEnvironment {
+impl<'info> wasm::TargetEnvironment for FunctionEnvironment<'info> {
     fn target_config(&self) -> TargetFrontendConfig {
         self.target_config
     }
 }
 
-impl wasm::FuncEnvironment for FunctionEnvironment {
+impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
     fn make_global(
         &mut self,
         func: &mut cranelift_codegen::ir::Function,
@@ -301,7 +305,15 @@ impl wasm::FuncEnvironment for FunctionEnvironment {
         func: &mut cranelift_codegen::ir::Function,
         index: FuncIndex,
     ) -> wasm::WasmResult<cranelift_codegen::ir::FuncRef> {
-        todo!()
+        let name = get_func_name(index);
+        let signature = self.info.get_func_sig(index);
+        // TODO: can we somehow avoid cloning here? Maybe keep a map of SigRef somewhere.
+        let signature = func.import_signature(signature.clone());
+        Ok(func.import_function(ir::ExtFuncData {
+            name,
+            signature,
+            colocated: false, // TODO: set that to true if the func lives in the same module
+        }))
     }
 
     fn translate_call_indirect(

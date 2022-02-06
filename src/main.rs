@@ -36,7 +36,7 @@ fn main() {
 
     // Great, now let's try to call that function by hand
     unsafe {
-        let fun = module.get_function("add").unwrap();
+        let fun = module.get_function("double_add").unwrap();
         println!("Fun addr: {:p}", fun.ptr);
 
         let a: u32 = 2;
