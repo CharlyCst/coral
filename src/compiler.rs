@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 
 use cranelift_codegen::binemit::{Addend, CodeOffset, Reloc as RelocKind, RelocSink};
+use cranelift_codegen::entity::{entity_impl, PrimaryMap};
 use cranelift_codegen::ir;
 use cranelift_codegen::isa;
 use cranelift_codegen::settings;
 use cranelift_wasm::{translate_module, ModuleTranslationState};
 
 use crate::env;
-use crate::traits;
+use crate::traits::{self, CompilerError, ModuleError};
 
 // ————————————————————————————————— Utils —————————————————————————————————— //
 
@@ -60,9 +61,9 @@ impl X86_64Compiler {
 }
 
 impl traits::Compiler for X86_64Compiler {
-    type Module = ModuleInfo;
+    type Module = Module;
 
-    fn parse(&mut self, wasm_bytecode: &[u8]) -> traits::CompilerResults<()> {
+    fn parse(&mut self, wasm_bytecode: &[u8]) -> traits::CompilerResult<()> {
         let translation_result = translate_module(wasm_bytecode, &mut self.module);
         match translation_result {
             Ok(module) => {
@@ -76,12 +77,9 @@ impl traits::Compiler for X86_64Compiler {
         }
     }
 
-    fn compile<Alloc>(self, alloc: &mut Alloc) -> traits::CompilerResults<ModuleInfo>
-    where
-        Alloc: traits::ModuleAllocator,
-    {
+    fn compile(self) -> traits::CompilerResult<Module> {
+        let mut code = Vec::new();
         let mut mod_info = ModuleInfo::new();
-
         let mut relocs = RelocationHandler::new();
         // TODO: handle those
         let mut traps: Box<dyn cranelift_codegen::binemit::TrapSink> =
@@ -92,38 +90,24 @@ impl traits::Compiler for X86_64Compiler {
         for (_, (fun, fun_idx)) in self.module.info.fun_bodies.into_iter() {
             // Compile and emit to memory
             let name: Name = (&fun.name).into();
-            let mut ctx = cranelift_codegen::Context::for_function(fun);
-            let code_info = ctx.compile(&*self.target_isa).unwrap();
-            let code_size = code_info.total_size as usize;
-            let code_ptr = alloc.alloc_code(code_size);
-            relocs.set_base_addr(code_ptr as u64);
-            relocs.register_item(name, code_ptr as u64);
-            // SAFETY: the code pointer must point to a valid writable regions with enough capacity
-            // to contain the whole function body.
-            let _info = unsafe {
-                ctx.emit_to_memory(
-                    code_ptr,
-                    &mut *relocs.as_dyn(),
-                    &mut *traps,
-                    &mut *stack_maps,
-                )
-            };
-
-            // Export the function, if required
+            let offset = code.len() as u32;
             let fun_info = &self.module.info.funs[fun_idx];
-            for name in &fun_info.export_names {
-                mod_info
-                    .funs
-                    .insert(name.to_owned(), FunctionInfo { ptr: code_ptr });
-            }
+            let mut ctx = cranelift_codegen::Context::for_function(fun);
+            mod_info.register_func(name, &fun_info.export_names, offset);
+
+            relocs.set_offset(offset);
+            let mut relocs = relocs.as_dyn();
+            ctx.compile_and_emit(
+                &*self.target_isa,
+                &mut code,
+                &mut *relocs,
+                &mut *traps,
+                &mut *stack_maps,
+            )
+            .map_err(|_| CompilerError::FailedToCompile)?; // TODO: better error handling
         }
 
-        // Apply relocations
-        unsafe {
-            relocs.apply_relocs().unwrap();
-        }
-
-        Ok(mod_info)
+        Ok(Module::new(mod_info, code, relocs.relocs))
     }
 }
 
@@ -168,7 +152,7 @@ impl LibcAllocator {
     }
 }
 
-impl traits::ModuleAllocator for LibcAllocator {
+impl traits::Allocator for LibcAllocator {
     fn alloc_code(&mut self, code_size: usize) -> *mut u8 {
         if self.capacity < code_size {
             self.increase();
@@ -207,89 +191,96 @@ impl traits::ModuleAllocator for LibcAllocator {
     }
 }
 
+// ————————————————————————————————— Module ————————————————————————————————— //
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FuncIndex(u32);
+entity_impl!(FuncIndex);
+
+pub enum ModuleItem {
+    Func(FuncIndex),
+}
+
 pub struct FunctionInfo {
-    pub ptr: *const u8,
+    pub offset: u32,
     // TODO: add signature
 }
 
 pub struct ModuleInfo {
-    funs: HashMap<String, FunctionInfo>,
+    exported_names: HashMap<String, Name>,
+    items: HashMap<Name, ModuleItem>,
+    funs: PrimaryMap<FuncIndex, FunctionInfo>,
 }
 
 impl ModuleInfo {
     pub fn new() -> Self {
         Self {
-            funs: HashMap::new(),
+            exported_names: HashMap::new(),
+            items: HashMap::new(),
+            funs: PrimaryMap::new(),
         }
     }
 
-    pub fn get_function<'a, 'b>(&'a self, name: &'b str) -> Option<&'a FunctionInfo> {
-        self.funs.get(name)
-    }
-}
+    fn register_func(&mut self, name: Name, exported_names: &Vec<String>, offset: u32) {
+        let func_info = FunctionInfo { offset };
+        let idx = self.funs.push(func_info);
+        self.items.insert(name, ModuleItem::Func(idx));
 
-// ——————————————————————————— Relocation Handler ——————————————————————————— //
-
-struct Reloc {
-    addr: u64,
-    kind: RelocKind,
-    name: Name,
-    addend: Addend,
-}
-
-pub struct RelocationHandler {
-    relocs: Vec<Reloc>,
-    // Addresses of various items in the current module
-    module_items: HashMap<Name, u64>,
-    base_addr: u64,
-}
-
-pub struct RelocationProxy<'handler> {
-    handler: &'handler mut RelocationHandler,
-}
-
-impl RelocationHandler {
-    pub fn new() -> Self {
-        Self {
-            relocs: Vec::new(),
-            module_items: HashMap::new(),
-            base_addr: 0,
+        // Export the function, if required
+        for exported_name in exported_names {
+            self.exported_names.insert(exported_name.to_owned(), name);
         }
     }
 
-    /// Set the base address of the relocations.
-    /// This functions must be called with the code address before emitting relocation for a
-    /// function.
-    pub fn set_base_addr(&mut self, base_addr: u64) {
-        self.base_addr = base_addr;
+    pub fn _get_function<'a, 'b>(&'a self, symbol: &'b str) -> Option<&'a FunctionInfo> {
+        let name = self.exported_names.get(symbol)?;
+        self.get_func_by_name(*name)
     }
 
-    pub fn register_item(&mut self, name: Name, addr: u64) {
-        self.module_items.insert(name.into(), addr);
+    pub fn get_func_by_name(&self, name: Name) -> Option<&FunctionInfo> {
+        match self.items.get(&name) {
+            Some(&ModuleItem::Func(idx)) => Some(&self.funs[idx]),
+            _ => None,
+        }
+    }
+}
+
+pub struct Module {
+    pub info: ModuleInfo,
+    pub code: Vec<u8>,
+    relocs: Vec<Reloc>, // TODO: resolve offset at compile time
+}
+
+impl Module {
+    pub fn new(info: ModuleInfo, code: Vec<u8>, relocs: Vec<Reloc>) -> Self {
+        Self { info, code, relocs }
     }
 
-    /// Apply all the relocations previously collected.
+    /// Apply relocations to code inside a buffer.
     ///
     /// ## Safety
     ///
-    /// This function writes relocations directly to memory, the caller must ensure that all the
-    /// relocation positions are valid, in particular that the base address has been set correctly
-    /// using the [`set_base_addr`] method.
-    pub unsafe fn apply_relocs(self) -> Result<(), ()> {
-        self.apply_relocs_inner()
+    /// The caller must ensure that all the relocation positions are valid.
+    unsafe fn apply_relocs(&self, code: &mut [u8], code_addr: i64) -> traits::ModuleResult<()> {
+        self._apply_relocs_inner(code, code_addr)
     }
 
-    fn apply_relocs_inner(self) -> Result<(), ()> {
+    /// Internal function, should only be called from `apply_relocs`.
+    fn _apply_relocs_inner(&self, code: &mut [u8], code_addr: i64) -> traits::ModuleResult<()> {
         for reloc in &self.relocs {
             let addend = reloc.addend;
-            let value = self.get_addr(reloc.name).ok_or(())?;
+            let value = if let Some(func) = self.info.get_func_by_name(reloc.name) {
+                code_addr + func.offset as i64
+            } else {
+                // We dont handle external symbols for now
+                return Err(ModuleError::FailedToInstantiate);
+            };
+            let offset = reloc.offset as usize;
             match reloc.kind {
                 RelocKind::Abs4 => todo!(),
                 RelocKind::Abs8 => {
-                    let ptr = reloc.addr as *mut i64;
-                    unsafe {
-                        *ptr = value as i64 + addend;
-                    }
+                    let final_value = value + addend;
+                    code[offset..][..8].copy_from_slice(&final_value.to_le_bytes());
                 }
                 RelocKind::X86PCRel4 => todo!(),
                 RelocKind::X86CallPCRel4 => todo!(),
@@ -307,9 +298,102 @@ impl RelocationHandler {
 
         Ok(())
     }
+}
 
-    fn get_addr(&self, name: Name) -> Option<u64> {
-        self.module_items.get(&name).cloned()
+impl traits::Module for Module {
+    type Instance = Instance;
+
+    fn instantiate<Alloc>(&self, alloc: &mut Alloc) -> traits::ModuleResult<Self::Instance>
+    where
+        Alloc: traits::Allocator,
+    {
+        let code_size = self.code.len();
+        let code_ptr = alloc.alloc_code(code_size);
+
+        // SAFETY: We rely on the correctness of the allocator that must return a pointer to an
+        // unused memory region of the appropriate size.
+        unsafe {
+            let code = core::slice::from_raw_parts_mut(code_ptr, code_size);
+            code.copy_from_slice(&self.code);
+            self.apply_relocs(code, code_ptr as i64)?;
+        };
+
+        let mut instance = Instance::new();
+        let info = &self.info;
+        for (exported_name, name) in &info.exported_names {
+            let item = &info.items[&name];
+            let symbol = match item {
+                ModuleItem::Func(idx) => {
+                    let func = &info.funs[*idx];
+                    let addr = code_ptr.wrapping_add(func.offset as usize);
+                    Symbol::Function { addr }
+                }
+            };
+            instance.symbols.insert(exported_name.to_owned(), symbol);
+        }
+
+        Ok(instance)
+    }
+}
+
+// ———————————————————————————————— Instance ———————————————————————————————— //
+
+pub enum Symbol {
+    Function { addr: *const u8 },
+}
+
+impl Symbol {
+    pub fn addr(&self) -> *const u8 {
+        match self {
+            Symbol::Function { addr } => *addr,
+        }
+    }
+}
+
+pub struct Instance {
+    symbols: HashMap<String, Symbol>,
+}
+
+impl Instance {
+    pub fn new() -> Self {
+        Self {
+            symbols: HashMap::new(),
+        }
+    }
+
+    pub fn get<'a, 'b>(&'a self, symbol: &'b str) -> Option<&'a Symbol> {
+        self.symbols.get(symbol)
+    }
+}
+
+// ——————————————————————————— Relocation Handler ——————————————————————————— //
+
+pub struct Reloc {
+    offset: u32,
+    kind: RelocKind,
+    name: Name,
+    addend: Addend,
+}
+
+pub struct RelocationHandler {
+    relocs: Vec<Reloc>,
+    func_offset: u32,
+}
+
+pub struct RelocationProxy<'handler> {
+    handler: &'handler mut RelocationHandler,
+}
+
+impl RelocationHandler {
+    pub fn new() -> Self {
+        Self {
+            relocs: Vec::new(),
+            func_offset: 0,
+        }
+    }
+
+    pub fn set_offset(&mut self, offset: u32) {
+        self.func_offset = offset;
     }
 
     /// Wrap the relocation handler into a dynamic object.
@@ -334,7 +418,7 @@ impl RelocSink for RelocationHandler {
         );
 
         self.relocs.push(Reloc {
-            addr: self.base_addr + offset as u64,
+            offset: self.func_offset + offset as u32,
             name: name.into(),
             kind,
             addend,

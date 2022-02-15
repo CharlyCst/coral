@@ -5,8 +5,9 @@ mod compiler;
 mod env;
 mod traits;
 
+use traits::Allocator;
 use traits::Compiler;
-use traits::ModuleAllocator;
+use traits::Module;
 
 fn main() {
     println!("Kranelift");
@@ -31,25 +32,26 @@ fn main() {
     let mut alloc = compiler::LibcAllocator::new();
 
     comp.parse(&bytecode).unwrap();
-    let module = comp.compile(&mut alloc).unwrap();
+    let module = comp.compile().unwrap();
+    let instance = module.instantiate(&mut alloc).unwrap();
     alloc.terminate();
 
     // Great, now let's try to call that function by hand
     unsafe {
-        let fun = module.get_function("double_add").unwrap();
-        println!("Fun addr: {:p}", fun.ptr);
+        let fun = "double_add";
+        let fun_ptr = instance.get(fun).unwrap().addr();
+        println!("Fun addr: {:p}", fun_ptr);
 
         let a: u32 = 2;
         let b: u32 = 3;
         let c: u32;
-        let addr: u64 = fun.ptr as u64;
         asm!(
             "call {entry_point}",
-            entry_point = in(reg) addr,
+            entry_point = in(reg) fun_ptr,
             in("rdi") a,
             in("rsi") b,
             out("rax") c,
         );
-        println!("{} + {} = {}", a, b, c);
+        println!("{}({}, {}) = {}", fun, a, b, c);
     }
 }
