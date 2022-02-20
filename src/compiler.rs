@@ -8,7 +8,7 @@ use cranelift_codegen::settings;
 use cranelift_wasm::{translate_module, ModuleTranslationState};
 
 use crate::env;
-use crate::traits::{self, CompilerError, ModuleError};
+use crate::traits::{self, CompilerError, HeapKind, ModuleError};
 
 // ————————————————————————————————— Utils —————————————————————————————————— //
 
@@ -104,7 +104,10 @@ impl traits::Compiler for X86_64Compiler {
                 &mut *traps,
                 &mut *stack_maps,
             )
-            .map_err(|_| CompilerError::FailedToCompile)?; // TODO: better error handling
+            .map_err(|err| {
+                eprintln!("Err: {:?}", err);
+                CompilerError::FailedToCompile
+            })?; // TODO: better error handling
         }
 
         Ok(Module::new(mod_info, code, relocs.relocs))
@@ -153,7 +156,8 @@ impl LibcAllocator {
 }
 
 impl traits::Allocator for LibcAllocator {
-    fn alloc_code(&mut self, code_size: usize) -> *mut u8 {
+    fn alloc_code(&mut self, code_size: u32) -> *mut u8 {
+        let code_size = code_size as usize;
         if self.capacity < code_size {
             self.increase();
             if self.capacity < code_size {
@@ -166,10 +170,6 @@ impl traits::Allocator for LibcAllocator {
         self.next = self.next.wrapping_offset(code_size as isize);
 
         ptr
-    }
-
-    fn alloc_memory(&mut self) {
-        todo!()
     }
 
     fn terminate(self) {
@@ -189,6 +189,28 @@ impl traits::Allocator for LibcAllocator {
             }
         }
     }
+
+    fn alloc_heap(
+        &mut self,
+        min_size: u32,
+        _max_size: Option<u32>,
+        _kind: traits::HeapKind,
+    ) -> *mut u8 {
+        let ptr = unsafe {
+            libc::mmap(
+                0 as *mut libc::c_void,
+                PAGE_SIZE * min_size as usize,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        if ptr == 0 as *mut libc::c_void {
+            panic!("Failled mmap for heap allocation");
+        }
+        todo!()
+    }
 }
 
 // ————————————————————————————————— Module ————————————————————————————————— //
@@ -197,8 +219,13 @@ impl traits::Allocator for LibcAllocator {
 pub struct FuncIndex(u32);
 entity_impl!(FuncIndex);
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HeapIndex(u32);
+entity_impl!(HeapIndex);
+
 pub enum ModuleItem {
     Func(FuncIndex),
+    Heap(HeapIndex),
 }
 
 pub struct FunctionInfo {
@@ -206,10 +233,17 @@ pub struct FunctionInfo {
     // TODO: add signature
 }
 
+pub struct HeapInfo {
+    pub min_size: u32,
+    pub max_size: Option<u32>,
+    pub kind: HeapKind,
+}
+
 pub struct ModuleInfo {
     exported_names: HashMap<String, Name>,
     items: HashMap<Name, ModuleItem>,
     funs: PrimaryMap<FuncIndex, FunctionInfo>,
+    heaps: PrimaryMap<HeapIndex, HeapInfo>,
 }
 
 impl ModuleInfo {
@@ -218,6 +252,7 @@ impl ModuleInfo {
             exported_names: HashMap::new(),
             items: HashMap::new(),
             funs: PrimaryMap::new(),
+            heaps: PrimaryMap::new(),
         }
     }
 
@@ -298,6 +333,20 @@ impl Module {
 
         Ok(())
     }
+
+    fn build_datastructures<Alloc>(&self, alloc: &mut Alloc) -> (VMContext, Vec<Heap>)
+    where
+        Alloc: traits::Allocator,
+    {
+        let mut vmctx = Vec::new();
+        let mut heaps = Vec::new();
+        for (_, heap) in &self.info.heaps {
+            let heap_ptr = alloc.alloc_heap(heap.min_size, heap.max_size, heap.kind);
+            heaps.push(Heap { addr: heap_ptr });
+            vmctx.push(heap_ptr);
+        }
+        (vmctx, heaps)
+    }
 }
 
 impl traits::Module for Module {
@@ -308,7 +357,7 @@ impl traits::Module for Module {
         Alloc: traits::Allocator,
     {
         let code_size = self.code.len();
-        let code_ptr = alloc.alloc_code(code_size);
+        let code_ptr = alloc.alloc_code(code_size as u32);
 
         // SAFETY: We rely on the correctness of the allocator that must return a pointer to an
         // unused memory region of the appropriate size.
@@ -319,6 +368,8 @@ impl traits::Module for Module {
         };
 
         let mut instance = Instance::new();
+
+        // Collect exported symbols
         let info = &self.info;
         for (exported_name, name) in &info.exported_names {
             let item = &info.items[&name];
@@ -328,9 +379,15 @@ impl traits::Module for Module {
                     let addr = code_ptr.wrapping_add(func.offset as usize);
                     Symbol::Function { addr }
                 }
+                ModuleItem::Heap(_) => todo!("Handle memory export"),
             };
             instance.symbols.insert(exported_name.to_owned(), symbol);
         }
+
+        // Instantiate data structures (e.g. heaps, tables...)
+        let (vmctx, heaps) = self.build_datastructures(alloc);
+        instance.vmctx = vmctx;
+        instance.heaps = heaps;
 
         Ok(instance)
     }
@@ -350,19 +407,38 @@ impl Symbol {
     }
 }
 
+type VMContext = Vec<*mut u8>;
+
+struct Heap {
+    addr: *mut u8,
+}
+
 pub struct Instance {
+    /// A map of all exported symbols.
     symbols: HashMap<String, Symbol>,
+    /// The VM Context, contains pointers to various structures, such as heaps and tables.
+    ///
+    /// For now, only 8 bytes pointers are handled.
+    vmctx: VMContext,
+    /// The heaps of the instance.
+    heaps: Vec<Heap>,
 }
 
 impl Instance {
     pub fn new() -> Self {
         Self {
             symbols: HashMap::new(),
+            vmctx: Vec::new(),
+            heaps: Vec::new(),
         }
     }
 
     pub fn get<'a, 'b>(&'a self, symbol: &'b str) -> Option<&'a Symbol> {
         self.symbols.get(symbol)
+    }
+
+    pub fn get_vmctx(&self) -> &VMContext {
+        &self.vmctx
     }
 }
 

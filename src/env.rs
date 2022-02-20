@@ -1,8 +1,10 @@
 #![allow(unused_variables)]
 
 // use cranelift_wasm::{ModuleEnvironment, FuncTranslator};
+use cranelift_codegen::cursor;
 use cranelift_codegen::entity::{EntityRef, PrimaryMap};
 use cranelift_codegen::ir;
+use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_wasm as wasm;
 use cranelift_wasm::{DefinedFuncIndex, FuncIndex, TargetEnvironment, TypeIndex, WasmType};
@@ -41,6 +43,8 @@ pub struct ModuleInfo {
     pub funs: PrimaryMap<FuncIndex, Exportable<TypeIndex>>,
     /// Function bodies
     pub fun_bodies: PrimaryMap<DefinedFuncIndex, (ir::Function, FuncIndex)>,
+    /// The registered memories
+    pub memories: Vec<wasm::Memory>,
     // Configuration of the target
     target_config: TargetFrontendConfig,
 }
@@ -55,6 +59,7 @@ impl ModuleInfo {
         FunctionEnvironment {
             target_config: self.target_config,
             info: self,
+            vmctx: None,
         }
     }
 }
@@ -70,6 +75,7 @@ impl ModuleEnvironment {
             fun_types: PrimaryMap::new(),
             funs: PrimaryMap::new(),
             fun_bodies: PrimaryMap::new(),
+            memories: Vec::new(),
             target_config,
         };
 
@@ -107,6 +113,10 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         let mut sig = ir::Signature::new(CallConv::SystemV);
         sig.params
             .extend(wasm_func_type.params().iter().map(&mut wasm_to_ir));
+        sig.params.push(ir::AbiParam::special(
+            self.pointer_type(),
+            ir::ArgumentPurpose::VMContext,
+        ));
         sig.returns
             .extend(wasm_func_type.returns().iter().map(&mut wasm_to_ir));
         self.info.fun_types.push(sig);
@@ -159,7 +169,8 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
     }
 
     fn declare_memory(&mut self, memory: wasm::Memory) -> wasm::WasmResult<()> {
-        todo!()
+        self.info.memories.push(memory);
+        Ok(())
     }
 
     fn declare_global(&mut self, global: wasm::Global) -> wasm::WasmResult<()> {
@@ -259,6 +270,21 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
 struct FunctionEnvironment<'info> {
     target_config: TargetFrontendConfig,
     info: &'info ModuleInfo,
+
+    /// A global variable containing the VMContext
+    vmctx: Option<ir::GlobalValue>,
+}
+
+impl<'info> FunctionEnvironment<'info> {
+    fn vmctx(&mut self, func: &mut ir::Function) -> ir::GlobalValue {
+        if let Some(vmctx) = self.vmctx {
+            vmctx
+        } else {
+            let vmctx = func.create_global_value(ir::GlobalValueData::VMContext);
+            self.vmctx = Some(vmctx);
+            vmctx
+        }
+    }
 }
 
 impl<'info> wasm::TargetEnvironment for FunctionEnvironment<'info> {
@@ -270,7 +296,7 @@ impl<'info> wasm::TargetEnvironment for FunctionEnvironment<'info> {
 impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
     fn make_global(
         &mut self,
-        func: &mut cranelift_codegen::ir::Function,
+        func: &mut ir::Function,
         index: wasm::GlobalIndex,
     ) -> wasm::WasmResult<wasm::GlobalVariable> {
         todo!()
@@ -278,10 +304,26 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
 
     fn make_heap(
         &mut self,
-        func: &mut cranelift_codegen::ir::Function,
+        func: &mut ir::Function,
         index: wasm::MemoryIndex,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Heap> {
-        todo!()
+    ) -> wasm::WasmResult<ir::Heap> {
+        // Heaps addresses are stored in the VMContext
+        println!("Heap: {:?}", func);
+        let vmctx = self.vmctx(func);
+        let base = func.create_global_value(ir::GlobalValueData::Load {
+            base: vmctx,
+            offset: 0.into(), // TODO: retrieve memory offset
+            global_type: ir::types::I64,
+            readonly: true, // TODO: readonly if the heap is static
+        });
+        let heap = func.create_heap(ir::HeapData {
+            base,
+            min_size: 1.into(),
+            offset_guard_size: 0.into(),
+            style: ir::HeapStyle::Static { bound: 1.into() },
+            index_type: ir::types::I32,
+        });
+        Ok(heap)
     }
 
     fn make_table(
@@ -314,6 +356,24 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
             signature,
             colocated: false, // TODO: set that to true if the func lives in the same module
         }))
+    }
+
+    fn translate_call(
+        &mut self,
+        mut pos: cursor::FuncCursor,
+        _callee_index: FuncIndex,
+        callee: ir::FuncRef,
+        call_args: &[ir::Value],
+    ) -> wasm::WasmResult<ir::Inst> {
+        // Append the vmctx to the call arguments
+        let caller_vmctx = pos
+            .func
+            .special_param(ir::ArgumentPurpose::VMContext)
+            .unwrap();
+        let mut real_call_args = Vec::with_capacity(call_args.len() + 1);
+        real_call_args.extend(call_args);
+        real_call_args.push(caller_vmctx);
+        Ok(pos.ins().call(callee, &real_call_args))
     }
 
     fn translate_call_indirect(

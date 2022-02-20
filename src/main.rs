@@ -44,12 +44,14 @@ fn main() {
 
         let a: u32 = 2;
         let b: u32 = 3;
+        let vmctx = instance.get_vmctx().as_ptr();
         let c: u32;
         asm!(
             "call {entry_point}",
             entry_point = in(reg) fun_ptr,
             in("rdi") a,
             in("rsi") b,
+            in("rdx") vmctx,
             out("rax") c,
         );
         println!("{}({}, {}) = {}", fun, a, b, c);
