@@ -2,7 +2,7 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HeapKind {
-    Static,
+    Static { max_size: u32 },
     Dynamic,
 }
 

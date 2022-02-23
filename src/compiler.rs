@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cranelift_codegen::binemit::{Addend, CodeOffset, Reloc as RelocKind, RelocSink};
+use cranelift_codegen::binemit::{Addend, CodeOffset, Reloc as RelocKind, RelocSink, TrapSink};
 use cranelift_codegen::entity::{entity_impl, PrimaryMap};
 use cranelift_codegen::ir;
 use cranelift_codegen::isa;
@@ -81,9 +81,8 @@ impl traits::Compiler for X86_64Compiler {
         let mut code = Vec::new();
         let mut mod_info = ModuleInfo::new();
         let mut relocs = RelocationHandler::new();
-        // TODO: handle those
-        let mut traps: Box<dyn cranelift_codegen::binemit::TrapSink> =
-            Box::new(cranelift_codegen::binemit::NullTrapSink::default());
+        let mut traps: Box<dyn cranelift_codegen::binemit::TrapSink> = Box::new(TrapHandler::new());
+        // TODO: handle stack maps
         let mut stack_maps: Box<dyn cranelift_codegen::binemit::StackMapSink> =
             Box::new(cranelift_codegen::binemit::NullStackMapSink {});
 
@@ -108,6 +107,10 @@ impl traits::Compiler for X86_64Compiler {
                 eprintln!("Err: {:?}", err);
                 CompilerError::FailedToCompile
             })?; // TODO: better error handling
+        }
+
+        for memory in self.module.info.memories {
+            mod_info.register_heap(memory.minimum as u32, memory.maximum.map(|x| x as u32));
         }
 
         Ok(Module::new(mod_info, code, relocs.relocs))
@@ -209,7 +212,7 @@ impl traits::Allocator for LibcAllocator {
         if ptr == 0 as *mut libc::c_void {
             panic!("Failled mmap for heap allocation");
         }
-        todo!()
+        ptr as *mut u8
     }
 }
 
@@ -225,6 +228,9 @@ entity_impl!(HeapIndex);
 
 pub enum ModuleItem {
     Func(FuncIndex),
+
+    // TODO: handle heap export (i.e. named heaps)
+    #[allow(unused)]
     Heap(HeapIndex),
 }
 
@@ -265,6 +271,18 @@ impl ModuleInfo {
         for exported_name in exported_names {
             self.exported_names.insert(exported_name.to_owned(), name);
         }
+    }
+
+    fn register_heap(&mut self, min_size: u32, max_size: Option<u32>) {
+        let kind = match max_size {
+            Some(max_size) => HeapKind::Static { max_size },
+            None => HeapKind::Dynamic,
+        };
+        self.heaps.push(HeapInfo {
+            min_size,
+            max_size,
+            kind,
+        });
     }
 
     pub fn _get_function<'a, 'b>(&'a self, symbol: &'b str) -> Option<&'a FunctionInfo> {
@@ -410,6 +428,8 @@ impl Symbol {
 type VMContext = Vec<*mut u8>;
 
 struct Heap {
+    // TODO: handle heap in a cleaner way (i.e. use slices).
+    #[allow(unused)]
     addr: *mut u8,
 }
 
@@ -439,6 +459,23 @@ impl Instance {
 
     pub fn get_vmctx(&self) -> &VMContext {
         &self.vmctx
+    }
+}
+
+// —————————————————————————————— Trap Handler —————————————————————————————— //
+
+pub struct TrapHandler {}
+
+impl TrapHandler {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl TrapSink for TrapHandler {
+    fn trap(&mut self, _offset: CodeOffset, _loc: ir::SourceLoc, _code: ir::TrapCode) {
+        // NOTE: can be enabled for debugging
+        // eprintln!("Trap at 0x{:x} - loc {:?} - code {:?}", _offset, _loc, _code);
     }
 }
 

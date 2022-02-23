@@ -9,6 +9,8 @@ use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_wasm as wasm;
 use cranelift_wasm::{DefinedFuncIndex, FuncIndex, TargetEnvironment, TypeIndex, WasmType};
 
+const WASM_PAGE_SIZE: u64 = 0x1000;
+
 /// Compute a `ir::ExternalName` for a given wasm function index.
 fn get_func_name(func_index: FuncIndex) -> ir::ExternalName {
     ir::ExternalName::user(0, func_index.as_u32())
@@ -169,6 +171,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
     }
 
     fn declare_memory(&mut self, memory: wasm::Memory) -> wasm::WasmResult<()> {
+        eprintln!("{:?}", &memory);
         self.info.memories.push(memory);
         Ok(())
     }
@@ -313,15 +316,15 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         let base = func.create_global_value(ir::GlobalValueData::Load {
             base: vmctx,
             offset: 0.into(), // TODO: retrieve memory offset
-            global_type: ir::types::I64,
-            readonly: true, // TODO: readonly if the heap is static
+            global_type: self.pointer_type(),
+            readonly: false, // TODO: readonly if the heap is static
         });
         let heap = func.create_heap(ir::HeapData {
             base,
-            min_size: 1.into(),
+            min_size: WASM_PAGE_SIZE.into(),
             offset_guard_size: 0.into(),
-            style: ir::HeapStyle::Static { bound: 1.into() },
-            index_type: ir::types::I32,
+            style: ir::HeapStyle::Static { bound: (2 * WASM_PAGE_SIZE).into() },
+            index_type: ir::types::I32, // TODO: handle wasm64
         });
         Ok(heap)
     }
