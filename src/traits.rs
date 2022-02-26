@@ -1,3 +1,7 @@
+use cranelift_codegen::entity::{entity_impl, Iter};
+
+use core::alloc;
+
 // ——————————————————————————————— Allocator ———————————————————————————————— //
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6,24 +10,34 @@ pub enum HeapKind {
     Dynamic,
 }
 
-// TODO: switch to references instead of raw pointers
+pub trait WriteXorExec {
+    /// Set the memory to executable and remove the write permission.
+    fn set_execute(&self, ptr: Box<[u8]>);
+}
+
 pub trait Allocator {
-    /// Return a raw pointer to a memory region suitable for receiving `code_size` bytes of
-    /// executable code.
-    fn alloc_code(&mut self, code_size: u32) -> *mut u8;
-    /// Return a raw pointer to a heap memory region.
-    fn alloc_heap(&mut self, min_size: u32, max_size: Option<u32>, kind: HeapKind) -> *mut u8;
-    /// Terminate the module allocation.
-    ///
-    /// This function is expected to set back protections for the code segment.
-    fn terminate(self);
+    type CodeAllocator: alloc::Allocator + WriteXorExec;
+    type HeapAllocator: alloc::Allocator;
+
+    /// Return a boxed slice of `code_size` writable bytes that can receive code.
+    /// The code allocator is expected to respect a W^X (write XOr execute) policy, if that is the
+    /// case the permissions must be switched to X before execution.
+    fn alloc_code(&self, code_size: u32) -> Box<[u8], Self::CodeAllocator>;
+
+    /// Return a boxed slice of at least `min_size` * PAGE_SIZE writable bytes to be used as heap.
+    fn alloc_heap(
+        &self,
+        min_size: u32,
+        max_size: Option<u32>,
+        kind: HeapKind,
+    ) -> Box<[u8], Self::HeapAllocator>;
 }
 
 // ———————————————————————————————— Compiler ———————————————————————————————— //
 
 /// The errors that might occur during compilation.
 ///
-/// TODO: collect commulated errors.
+/// TODO: collect cummulated errors.
 /// NOTE: We don't want to allocate in the error path as any allocation can fail.
 #[derive(Debug)]
 pub enum CompilerError {
@@ -42,18 +56,39 @@ pub trait Compiler {
 
 // ————————————————————————————————— Module ————————————————————————————————— //
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FuncIndex(u32);
+entity_impl!(FuncIndex);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HeapIndex(u32);
+entity_impl!(HeapIndex);
+
+pub enum ModuleItem {
+    Func(FuncIndex),
+    Heap(HeapIndex),
+}
+
+pub struct FunctionInfo {
+    pub offset: u32,
+    // TODO: add signature
+}
+
+pub struct HeapInfo {
+    pub min_size: u32,
+    pub max_size: Option<u32>,
+    pub kind: HeapKind,
+}
+
 /// The error that might occur during module instantiation.
 #[derive(Debug)]
-pub enum ModuleError {
-    FailedToInstantiate,
-}
+pub enum ModuleError {}
 
 pub type ModuleResult<T> = Result<T, ModuleError>;
 
 pub trait Module {
-    type Instance;
-
-    fn instantiate<Alloc>(&self, alloc: &mut Alloc) -> ModuleResult<Self::Instance>
-    where
-        Alloc: Allocator;
+    fn code_len(&self) -> usize;
+    fn code(&self) -> &[u8];
+    fn heaps(&self) -> Iter<'_, HeapIndex, HeapInfo>;
+    fn vmctx_items(&self) -> &[ModuleItem];
 }

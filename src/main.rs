@@ -1,13 +1,14 @@
-#![feature(asm)]
+#![feature(asm, allocator_api)]
 use std::fs;
 
+mod alloc;
 mod compiler;
 mod env;
+mod instances;
 mod traits;
 
-use traits::Allocator;
+use instances::Instance;
 use traits::Compiler;
-use traits::Module;
 
 fn main() {
     println!("Kranelift");
@@ -29,12 +30,11 @@ fn main() {
     };
 
     let mut comp = compiler::X86_64Compiler::new();
-    let mut alloc = compiler::LibcAllocator::new();
+    let alloc = alloc::LibcAllocator::new();
 
     comp.parse(&bytecode).unwrap();
     let module = comp.compile().unwrap();
-    let instance = module.instantiate(&mut alloc).unwrap();
-    alloc.terminate();
+    let instance = Instance::instance(module, &alloc);
 
     // Great, now let's try to call that function by hand
     unsafe {

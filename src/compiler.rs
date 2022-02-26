@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 
 use cranelift_codegen::binemit::{Addend, CodeOffset, Reloc as RelocKind, RelocSink, TrapSink};
-use cranelift_codegen::entity::{entity_impl, PrimaryMap};
+use cranelift_codegen::entity::PrimaryMap;
 use cranelift_codegen::ir;
 use cranelift_codegen::isa;
 use cranelift_codegen::settings;
 use cranelift_wasm::{translate_module, ModuleTranslationState};
 
 use crate::env;
-use crate::traits::{self, CompilerError, HeapKind, ModuleError};
+use crate::traits;
+use crate::traits::{
+    CompilerError, FuncIndex, FunctionInfo, HeapIndex, HeapInfo, HeapKind, ModuleItem,
+};
 
 // ————————————————————————————————— Utils —————————————————————————————————— //
 
@@ -117,133 +120,7 @@ impl traits::Compiler for X86_64Compiler {
     }
 }
 
-// ———————————————————————————— Module Allocator ———————————————————————————— //
-
-pub struct LibcAllocator {
-    next: *mut u8,
-    capacity: usize,
-    chunks: Vec<*mut u8>,
-}
-
-const PAGE_SIZE: usize = 0x1000;
-
-impl LibcAllocator {
-    pub fn new() -> Self {
-        Self {
-            next: 0 as *mut u8,
-            capacity: 0,
-            chunks: Vec::new(),
-        }
-    }
-
-    /// Increase the current capacity by allocating a new block
-    fn increase(&mut self) {
-        unsafe {
-            let ptr = libc::mmap(
-                0 as *mut libc::c_void,
-                PAGE_SIZE,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            );
-            if ptr == 0 as *mut libc::c_void {
-                panic!("Failled mmap");
-            }
-
-            self.next = ptr as *mut u8;
-            self.capacity = PAGE_SIZE;
-            self.chunks.push(ptr as *mut u8);
-        }
-    }
-}
-
-impl traits::Allocator for LibcAllocator {
-    fn alloc_code(&mut self, code_size: u32) -> *mut u8 {
-        let code_size = code_size as usize;
-        if self.capacity < code_size {
-            self.increase();
-            if self.capacity < code_size {
-                panic!("Code exceed the maximum capacity");
-            }
-        }
-
-        let ptr = self.next;
-        self.capacity -= code_size;
-        self.next = self.next.wrapping_offset(code_size as isize);
-
-        ptr
-    }
-
-    fn terminate(self) {
-        for ptr in self.chunks {
-            unsafe {
-                let ok = libc::mprotect(
-                    ptr as *mut libc::c_void,
-                    PAGE_SIZE,
-                    libc::PROT_READ | libc::PROT_EXEC,
-                );
-                if ok != 0 {
-                    panic!(
-                        "Could not set memory executable: errno {}",
-                        *libc::__errno_location()
-                    );
-                }
-            }
-        }
-    }
-
-    fn alloc_heap(
-        &mut self,
-        min_size: u32,
-        _max_size: Option<u32>,
-        _kind: traits::HeapKind,
-    ) -> *mut u8 {
-        let ptr = unsafe {
-            libc::mmap(
-                0 as *mut libc::c_void,
-                PAGE_SIZE * min_size as usize,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            )
-        };
-        if ptr == 0 as *mut libc::c_void {
-            panic!("Failled mmap for heap allocation");
-        }
-        ptr as *mut u8
-    }
-}
-
 // ————————————————————————————————— Module ————————————————————————————————— //
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct FuncIndex(u32);
-entity_impl!(FuncIndex);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct HeapIndex(u32);
-entity_impl!(HeapIndex);
-
-pub enum ModuleItem {
-    Func(FuncIndex),
-
-    // TODO: handle heap export (i.e. named heaps)
-    #[allow(unused)]
-    Heap(HeapIndex),
-}
-
-pub struct FunctionInfo {
-    pub offset: u32,
-    // TODO: add signature
-}
-
-pub struct HeapInfo {
-    pub min_size: u32,
-    pub max_size: Option<u32>,
-    pub kind: HeapKind,
-}
 
 pub struct ModuleInfo {
     exported_names: HashMap<String, Name>,
@@ -302,164 +179,140 @@ pub struct Module {
     pub info: ModuleInfo,
     pub code: Vec<u8>,
     relocs: Vec<Reloc>, // TODO: resolve offset at compile time
+    vmctx_layout: Vec<ModuleItem>,
 }
 
 impl Module {
     pub fn new(info: ModuleInfo, code: Vec<u8>, relocs: Vec<Reloc>) -> Self {
-        Self { info, code, relocs }
-    }
-
-    /// Apply relocations to code inside a buffer.
-    ///
-    /// ## Safety
-    ///
-    /// The caller must ensure that all the relocation positions are valid.
-    unsafe fn apply_relocs(&self, code: &mut [u8], code_addr: i64) -> traits::ModuleResult<()> {
-        self._apply_relocs_inner(code, code_addr)
-    }
-
-    /// Internal function, should only be called from `apply_relocs`.
-    fn _apply_relocs_inner(&self, code: &mut [u8], code_addr: i64) -> traits::ModuleResult<()> {
-        for reloc in &self.relocs {
-            let addend = reloc.addend;
-            let value = if let Some(func) = self.info.get_func_by_name(reloc.name) {
-                code_addr + func.offset as i64
-            } else {
-                // We dont handle external symbols for now
-                return Err(ModuleError::FailedToInstantiate);
-            };
-            let offset = reloc.offset as usize;
-            match reloc.kind {
-                RelocKind::Abs4 => todo!(),
-                RelocKind::Abs8 => {
-                    let final_value = value + addend;
-                    code[offset..][..8].copy_from_slice(&final_value.to_le_bytes());
-                }
-                RelocKind::X86PCRel4 => todo!(),
-                RelocKind::X86CallPCRel4 => todo!(),
-                RelocKind::X86CallPLTRel4 => todo!(),
-                RelocKind::X86GOTPCRel4 => todo!(),
-                RelocKind::Arm32Call => todo!(),
-                RelocKind::Arm64Call => todo!(),
-                RelocKind::S390xPCRel32Dbl => todo!(),
-                RelocKind::ElfX86_64TlsGd => todo!(),
-                RelocKind::MachOX86_64Tlv => todo!(),
-                RelocKind::Aarch64TlsGdAdrPage21 => todo!(),
-                RelocKind::Aarch64TlsGdAddLo12Nc => todo!(),
-            }
+        // Compute the VMContext layout
+        let heaps = &info.heaps;
+        let mut vmctx_layout = Vec::with_capacity(heaps.len());
+        for heap_idx in heaps.keys() {
+            vmctx_layout.push(ModuleItem::Heap(heap_idx))
         }
 
-        Ok(())
+        Self {
+            info,
+            code,
+            relocs,
+            vmctx_layout,
+        }
     }
 
-    fn build_datastructures<Alloc>(&self, alloc: &mut Alloc) -> (VMContext, Vec<Heap>)
-    where
-        Alloc: traits::Allocator,
-    {
-        let mut vmctx = Vec::new();
-        let mut heaps = Vec::new();
-        for (_, heap) in &self.info.heaps {
-            let heap_ptr = alloc.alloc_heap(heap.min_size, heap.max_size, heap.kind);
-            heaps.push(Heap { addr: heap_ptr });
-            vmctx.push(heap_ptr);
-        }
-        (vmctx, heaps)
-    }
+    ///// Apply relocations to code inside a buffer.
+    /////
+    ///// ## Safety
+    /////
+    ///// The caller must ensure that all the relocation positions are valid.
+    //unsafe fn apply_relocs(&self, code: &mut [u8], code_addr: i64) -> traits::ModuleResult<()> {
+    //    self._apply_relocs_inner(code, code_addr)
+    //}
+
+    // /// Internal function, should only be called from `apply_relocs`.
+    // fn _apply_relocs_inner(&self, code: &mut [u8], code_addr: i64) -> traits::ModuleResult<()> {
+    //     for reloc in &self.relocs {
+    //         let addend = reloc.addend;
+    //         let value = if let Some(func) = self.info.get_func_by_name(reloc.name) {
+    //             code_addr + func.offset as i64
+    //         } else {
+    //             // We dont handle external symbols for now
+    //             return Err(ModuleError::FailedToInstantiate);
+    //         };
+    //         let offset = reloc.offset as usize;
+    //         match reloc.kind {
+    //             RelocKind::Abs4 => todo!(),
+    //             RelocKind::Abs8 => {
+    //                 let final_value = value + addend;
+    //                 code[offset..][..8].copy_from_slice(&final_value.to_le_bytes());
+    //             }
+    //             RelocKind::X86PCRel4 => todo!(),
+    //             RelocKind::X86CallPCRel4 => todo!(),
+    //             RelocKind::X86CallPLTRel4 => todo!(),
+    //             RelocKind::X86GOTPCRel4 => todo!(),
+    //             RelocKind::Arm32Call => todo!(),
+    //             RelocKind::Arm64Call => todo!(),
+    //             RelocKind::S390xPCRel32Dbl => todo!(),
+    //             RelocKind::ElfX86_64TlsGd => todo!(),
+    //             RelocKind::MachOX86_64Tlv => todo!(),
+    //             RelocKind::Aarch64TlsGdAdrPage21 => todo!(),
+    //             RelocKind::Aarch64TlsGdAddLo12Nc => todo!(),
+    //         }
+    //     }
+
+    //     Ok(())
+    // }
+
+    // fn build_datastructures<Alloc>(&self, alloc: &mut Alloc) -> (VMContext, Vec<Heap>)
+    // where
+    //     Alloc: traits::Allocator,
+    // {
+    //     let mut vmctx = Vec::new();
+    //     let mut heaps = Vec::new();
+    //     for (_, heap) in &self.info.heaps {
+    //         let heap_ptr = alloc.alloc_heap(heap.min_size, heap.max_size, heap.kind);
+    //         heaps.push(Heap { addr: heap_ptr });
+    //         vmctx.push(heap_ptr);
+    //     }
+    //     (vmctx, heaps)
+    // }
 }
 
 impl traits::Module for Module {
-    type Instance = Instance;
-
-    fn instantiate<Alloc>(&self, alloc: &mut Alloc) -> traits::ModuleResult<Self::Instance>
-    where
-        Alloc: traits::Allocator,
-    {
-        let code_size = self.code.len();
-        let code_ptr = alloc.alloc_code(code_size as u32);
-
-        // SAFETY: We rely on the correctness of the allocator that must return a pointer to an
-        // unused memory region of the appropriate size.
-        unsafe {
-            let code = core::slice::from_raw_parts_mut(code_ptr, code_size);
-            code.copy_from_slice(&self.code);
-            self.apply_relocs(code, code_ptr as i64)?;
-        };
-
-        let mut instance = Instance::new();
-
-        // Collect exported symbols
-        let info = &self.info;
-        for (exported_name, name) in &info.exported_names {
-            let item = &info.items[&name];
-            let symbol = match item {
-                ModuleItem::Func(idx) => {
-                    let func = &info.funs[*idx];
-                    let addr = code_ptr.wrapping_add(func.offset as usize);
-                    Symbol::Function { addr }
-                }
-                ModuleItem::Heap(_) => todo!("Handle memory export"),
-            };
-            instance.symbols.insert(exported_name.to_owned(), symbol);
-        }
-
-        // Instantiate data structures (e.g. heaps, tables...)
-        let (vmctx, heaps) = self.build_datastructures(alloc);
-        instance.vmctx = vmctx;
-        instance.heaps = heaps;
-
-        Ok(instance)
-    }
-}
-
-// ———————————————————————————————— Instance ———————————————————————————————— //
-
-pub enum Symbol {
-    Function { addr: *const u8 },
-}
-
-impl Symbol {
-    pub fn addr(&self) -> *const u8 {
-        match self {
-            Symbol::Function { addr } => *addr,
-        }
-    }
-}
-
-type VMContext = Vec<*mut u8>;
-
-struct Heap {
-    // TODO: handle heap in a cleaner way (i.e. use slices).
-    #[allow(unused)]
-    addr: *mut u8,
-}
-
-pub struct Instance {
-    /// A map of all exported symbols.
-    symbols: HashMap<String, Symbol>,
-    /// The VM Context, contains pointers to various structures, such as heaps and tables.
-    ///
-    /// For now, only 8 bytes pointers are handled.
-    vmctx: VMContext,
-    /// The heaps of the instance.
-    heaps: Vec<Heap>,
-}
-
-impl Instance {
-    pub fn new() -> Self {
-        Self {
-            symbols: HashMap::new(),
-            vmctx: Vec::new(),
-            heaps: Vec::new(),
-        }
+    fn code_len(&self) -> usize {
+        self.code.len()
     }
 
-    pub fn get<'a, 'b>(&'a self, symbol: &'b str) -> Option<&'a Symbol> {
-        self.symbols.get(symbol)
+    fn code(&self) -> &[u8] {
+        &self.code
     }
 
-    pub fn get_vmctx(&self) -> &VMContext {
-        &self.vmctx
+    fn heaps(&self) -> cranelift_entity::Iter<'_, HeapIndex, HeapInfo> {
+        self.info.heaps.iter()
     }
+
+    fn vmctx_items(&self) -> &[ModuleItem] {
+        &self.vmctx_layout
+    }
+
+    // fn instantiate<Alloc>(&self, alloc: &mut Alloc) -> traits::ModuleResult<Self::Instance>
+    // where
+    //     Alloc: traits::Allocator,
+    // {
+    //     let code_size = self.code.len();
+    //     let code_ptr = alloc.alloc_code(code_size as u32);
+
+    //     // SAFETY: We rely on the correctness of the allocator that must return a pointer to an
+    //     // unused memory region of the appropriate size.
+    //     unsafe {
+    //         let code = core::slice::from_raw_parts_mut(code_ptr, code_size);
+    //         code.copy_from_slice(&self.code);
+    //         self.apply_relocs(code, code_ptr as i64)?;
+    //     };
+
+    //     let mut instance = Instance::new();
+
+    //     // Collect exported symbols
+    //     let info = &self.info;
+    //     for (exported_name, name) in &info.exported_names {
+    //         let item = &info.items[&name];
+    //         let symbol = match item {
+    //             ModuleItem::Func(idx) => {
+    //                 let func = &info.funs[*idx];
+    //                 let addr = code_ptr.wrapping_add(func.offset as usize);
+    //                 Symbol::Function { addr }
+    //             }
+    //             ModuleItem::Heap(_) => todo!("Handle memory export"),
+    //         };
+    //         instance.symbols.insert(exported_name.to_owned(), symbol);
+    //     }
+
+    //     // Instantiate data structures (e.g. heaps, tables...)
+    //     let (vmctx, heaps) = self.build_datastructures(alloc);
+    //     instance.vmctx = vmctx;
+    //     instance.heaps = heaps;
+
+    //     Ok(instance)
+    // }
 }
 
 // —————————————————————————————— Trap Handler —————————————————————————————— //
