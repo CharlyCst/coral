@@ -1,0 +1,96 @@
+#![allow(unused)]
+
+/// ## Collections used through the kernel and compiler.
+///
+/// For now most of the collections comes directly from Cranelift (through the `cranelift_entity`
+/// crate that is re-exported from `cranelift_codegen`).
+use cranelift_codegen::entity;
+
+use core::marker::PhantomData;
+use core::ops::{Index, IndexMut};
+
+// ——————————————————————————————— Re-Exports ——————————————————————————————— //
+
+pub use entity::entity_impl;
+pub use entity::{EntityRef, PrimaryMap, SecondaryMap};
+
+// TODO: switch to a no_std hashmap
+pub use std::collections::HashMap;
+
+// ———————————————————————————— New Collections ————————————————————————————— //
+
+/// A fixed lenght map with tagged indexes.
+///
+/// The values can still be modified, but the set of key is fixed. A new FrozenMap can be created
+/// either by consuming a PrimaryMap, or by mapping another FrozenMap.
+pub struct FrozenMap<K, V> {
+    elems: Vec<V>,
+    unused: PhantomData<K>,
+}
+
+impl<K, V> FrozenMap<K, V>
+where
+    K: EntityRef,
+{
+    /// Freeze a PrimaryMap, meaning that no new items can be added. It is still possible to mutate
+    /// the existing entries.
+    pub fn freeze(map: PrimaryMap<K, V>) -> Self {
+        // PrimaryMap does not expose its internal vector, therefore we nedlessly re-allocate a
+        // brand new vector and move all the elements inside.
+        //
+        // This could be fixed by upstreaming FrozenMap.
+        let elems = map.into_iter().map(|(_, v)| v).collect();
+        Self {
+            elems,
+            unused: PhantomData,
+        }
+    }
+
+    pub fn map<F, U>(&self, f: F) -> FrozenMap<K, U>
+    where
+        F: FnMut(&V) -> U,
+    {
+        let elems = self.elems.iter().map(f).collect();
+        FrozenMap {
+            elems,
+            unused: PhantomData,
+        }
+    }
+
+    /// Get the element at `k` if it exists.
+    pub fn get(&self, k: K) -> Option<&V> {
+        self.elems.get(k.index())
+    }
+
+    /// Get the element at `k` if it exists, mutable version.
+    pub fn get_mut(&mut self, k: K) -> Option<&mut V> {
+        self.elems.get_mut(k.index())
+    }
+
+    /// Get the number of elements in the map.
+    pub fn len(&self) -> usize {
+        self.elems.len()
+    }
+}
+
+/// Immutable indexing into a `FrozenMap`.
+impl<K, V> Index<K> for FrozenMap<K, V>
+where
+    K: EntityRef,
+{
+    type Output = V;
+
+    fn index(&self, k: K) -> &V {
+        &self.elems[k.index()]
+    }
+}
+
+/// Mutable indexing into a `FrozenMap`.
+impl<K, V> IndexMut<K> for FrozenMap<K, V>
+where
+    K: EntityRef,
+{
+    fn index_mut(&mut self, k: K) -> &mut V {
+        &mut self.elems[k.index()]
+    }
+}

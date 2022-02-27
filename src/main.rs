@@ -2,6 +2,7 @@
 use std::fs;
 
 mod alloc;
+mod collections;
 mod compiler;
 mod env;
 mod instances;
@@ -34,12 +35,12 @@ fn main() {
 
     comp.parse(&bytecode).unwrap();
     let module = comp.compile().unwrap();
-    let instance = Instance::instance(module, &alloc);
+    let instance = Instance::instantiate(module, &alloc).unwrap();
 
     // Great, now let's try to call that function by hand
     unsafe {
         let fun = "double_add";
-        let fun_ptr = instance.get(fun).unwrap().addr();
+        let fun_ptr = instance.get_func_addr(fun).unwrap();
         println!("Fun addr: {:p}", fun_ptr);
 
         let a: u32 = 2;
