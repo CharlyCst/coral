@@ -57,6 +57,20 @@ where
         }
     }
 
+    pub fn try_map<F, U, E>(&self, mut f: F) -> Result<FrozenMap<K, U>, E>
+    where
+        F: FnMut(&V) -> Result<U, E>,
+    {
+        let mut elems = Vec::with_capacity(self.len());
+        for elem in &self.elems {
+            elems.push(f(elem)?);
+        }
+        Ok(FrozenMap {
+            elems,
+            unused: PhantomData,
+        })
+    }
+
     /// Get the element at `k` if it exists.
     pub fn get(&self, k: K) -> Option<&V> {
         self.elems.get(k.index())

@@ -63,32 +63,29 @@ pub struct ImportIndex(u32);
 entity_impl!(ImportIndex);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ModuleItem {
+pub enum ItemRef {
     Func(FuncIndex),
     Heap(HeapIndex),
 }
 
-/// A name uniquely identify an item inside of an instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Name {
-    #[allow(unused)] // TODO: remove that once imports are supported
-    Imported { from: ImportIndex, item: ModuleItem },
-    Owned(ModuleItem),
-}
-
-impl Name {
-    pub fn owned_func(func: FuncIndex) -> Self {
-        Self::Owned(ModuleItem::Func(func))
-    }
-
-    pub fn owned_heap(heap: HeapIndex) -> Self {
-        Self::Owned(ModuleItem::Heap(heap))
+impl ItemRef {
+    pub fn as_func(self) -> Option<FuncIndex> {
+        match self {
+            ItemRef::Func(idx) => Some(idx),
+            _ => None
+        }
     }
 }
 
-pub struct FunctionInfo {
-    pub offset: u32,
-    // TODO: add signature
+pub enum FuncInfo {
+    // TODO: add signatures
+    Owned {
+        offset: u32,
+    },
+    Imported {
+        module: String,
+        name: String,
+    }
 }
 
 pub struct HeapInfo {
@@ -105,7 +102,7 @@ pub struct Reloc {
     pub kind: RelocKind,
 
     /// The symbol, whose address corresponds to the new relocation value.
-    pub name: Name,
+    pub item: ItemRef,
 
     /// A value to add to the relocation.
     pub addend: Addend,
@@ -122,8 +119,8 @@ pub type ModuleResult<T> = Result<T, ModuleError>;
 pub trait Module {
     fn code(&self) -> &[u8];
     fn heaps(&self) -> &FrozenMap<HeapIndex, HeapInfo>;
-    fn funcs(&self) -> &FrozenMap<FuncIndex, FunctionInfo>;
+    fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo>;
     fn relocs(&self) -> &[Reloc];
-    fn public_symbols(&self) -> &HashMap<String, Name>;
-    fn vmctx_items(&self) -> &[Name];
+    fn public_items(&self) -> &HashMap<String, ItemRef>;
+    fn vmctx_items(&self) -> &[ItemRef];
 }

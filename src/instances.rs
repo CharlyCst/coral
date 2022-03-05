@@ -1,12 +1,12 @@
 #![allow(unused)]
 
-use crate::collections::{FrozenMap, HashMap};
-use crate::traits::{Allocator, FuncIndex, Module, ModuleError, ModuleResult};
-use crate::traits::{HeapIndex, HeapKind, Name, RelocKind};
+use crate::collections::{FrozenMap, HashMap, PrimaryMap};
+use crate::traits::{Allocator, Module, ModuleError, ModuleResult};
+use crate::traits::{FuncIndex, FuncInfo, HeapIndex, HeapKind, ImportIndex, ItemRef, RelocKind};
 
 type VMContext = Vec<*const u8>;
 
-enum Symbol<'a, Alloc: Allocator> {
+enum Item<'a, Alloc: Allocator> {
     Func(&'a Func),
     Heap(&'a Heap<Alloc>),
 }
@@ -31,16 +31,17 @@ impl<Alloc: Allocator> Heap<Alloc> {
     }
 }
 
-struct Func {
-    offset: u32,
+enum Func {
+    Owned { offset: u32 },
+    Imported { from: ImportIndex, index: FuncIndex },
 }
 
 pub struct Instance<Alloc: Allocator> {
     /// A map of all exported symbols.
-    symbols: HashMap<String, Name>,
+    items: HashMap<String, ItemRef>,
 
     /// The list of items in the VMContext. Used to dynamically update the VMContext.
-    vmctx_items: Vec<Name>,
+    vmctx_items: Vec<ItemRef>,
 
     /// The VM Context, contains pointers to various structures, such as heaps and tables.
     ///
@@ -53,19 +54,60 @@ pub struct Instance<Alloc: Allocator> {
     /// The functions of the instance.
     funcs: FrozenMap<FuncIndex, Func>,
 
+    /// The imported instances.
+    imports: FrozenMap<ImportIndex, Instance<Alloc>>,
+
     /// The memory region containing the code
     code: Box<[u8], Alloc::CodeAllocator>,
 }
 
 impl<Alloc: Allocator> Instance<Alloc> {
-    pub fn instantiate(module: impl Module, alloc: &Alloc) -> ModuleResult<Self>
+    pub fn instantiate(
+        module: &impl Module,
+        import_from: Vec<(&str, Instance<Alloc>)>,
+        alloc: &Alloc,
+    ) -> ModuleResult<Self>
     where
         Alloc: Allocator,
     {
-        let funcs = module.funcs().map(|func_info| Func {
-            offset: func_info.offset,
-        });
-        let symbols = module.public_symbols().clone();
+        let mut imports = PrimaryMap::with_capacity(import_from.len());
+        let imports_refs = import_from
+            .into_iter()
+            .map(|(name, instance)| {
+                let idx: ImportIndex = imports.push(instance);
+                (name, idx)
+            })
+            .collect::<Vec<(&str, ImportIndex)>>();
+        let imports = FrozenMap::freeze(imports);
+
+        let funcs = module.funcs().try_map(|func_info| match func_info {
+            FuncInfo::Owned { offset } => Ok(Func::Owned { offset: *offset }),
+            FuncInfo::Imported { module, name } => {
+                // Look for the corresponding module
+                // NOTE: maybe we want a smarter lookup strategy?
+                let (_, import_idx) = imports_refs
+                    .iter()
+                    .find(|(m, idx)| m == module)
+                    .ok_or(ModuleError::FailedToInstantiate)?;
+                let instance = &imports[*import_idx];
+                let func_ref = instance
+                    .items
+                    .get(name)
+                    .ok_or(ModuleError::FailedToInstantiate)?
+                    .as_func()
+                    .ok_or(ModuleError::FailedToInstantiate)?;
+
+                // TODO: typecheck the function here
+                let _func = &instance.funcs[func_ref];
+
+                Ok(Func::Imported {
+                    from: *import_idx,
+                    index: func_ref,
+                })
+            }
+        })?;
+
+        let items = module.public_items().to_owned();
         let vmctx_items = module.vmctx_items().to_owned();
 
         // Allocate heaps
@@ -82,7 +124,8 @@ impl<Alloc: Allocator> Instance<Alloc> {
         let mut instance = Self {
             vmctx: vec![core::ptr::NonNull::dangling().as_ptr(); vmctx_items.len()],
             vmctx_items,
-            symbols,
+            imports,
+            items,
             heaps,
             funcs,
             code,
@@ -98,28 +141,36 @@ impl<Alloc: Allocator> Instance<Alloc> {
         Ok(instance)
     }
 
-    /// Returns the address of a function exported bu the instance.
-    pub fn get_func_addr<'a, 'b>(&'a self, name: &'b str) -> Option<*const u8> {
-        let name = self.symbols.get(name)?;
-        let func = self.get_func_from_name(*name)?;
-        let addr = self.code.as_ptr();
+    /// Returns the address of a function exported by the instance.
+    pub fn get_func_addr_from_name<'a, 'b>(&'a self, name: &'b str) -> Option<*const u8> {
+        let name = self.items.get(name)?;
+        let func = self.get_func(*name)?;
 
-        // SAFETY: We rely on the function offset being correct here, in which case the offset is
-        // less or equal to `code.len()` and points to the start of the intended function.
-        unsafe { Some(addr.offset(func.offset as isize)) }
+        match func {
+            Func::Owned { offset } => {
+                let addr = self.code.as_ptr();
+
+                // SAFETY: We rely on the function offset being correct here, in which case the offset is
+                // less or equal to `code.len()` and points to the start of the intended function.
+                unsafe { Some(addr.offset(*offset as isize)) }
+            }
+            Func::Imported { from, index: func } => todo!(),
+        }
     }
 
     pub fn get_vmctx(&self) -> &VMContext {
         &self.vmctx
     }
 
-    fn relocate(&mut self, module: impl Module) -> ModuleResult<()> {
+    fn relocate(&mut self, module: &impl Module) -> ModuleResult<()> {
         for reloc in module.relocs() {
-            let value = if let Some(func) = self.get_func_from_name(reloc.name) {
-                self.code.as_ptr() as i64 + func.offset as i64 + reloc.addend
-            } else {
-                return Err(ModuleError::FailedToInstantiate);
+            let value = match reloc.item {
+                ItemRef::Func(func) => self.get_func_addr(func),
+                // Only functions are supported by relocations
+                _ => return Err(ModuleError::FailedToInstantiate),
             };
+            let value = value + reloc.addend;
+
             let offset = reloc.offset as usize;
             match reloc.kind {
                 RelocKind::Abs4 => todo!(),
@@ -143,34 +194,43 @@ impl<Alloc: Allocator> Instance<Alloc> {
         Ok(())
     }
 
+    /// Return the address of a function.
+    /// Imported functions are resolved though recursive lookups.
+    fn get_func_addr(&self, func: FuncIndex) -> i64 {
+        match &self.funcs[func] {
+            Func::Owned { offset } => self.code.as_ptr() as i64 + *offset as i64,
+            Func::Imported { from, index } => {
+                let instance = &self.imports[*from];
+                instance.get_func_addr(*index)
+            }
+        }
+    }
+
     // Create the VMContext, a structure containing pointers to the VM's items and that can be
     // queried during code execution.
     fn update_vmctx(&mut self) {
         // WARNING: `vmctx` and `vmctx_items` must have the exact same size here!
         assert_eq!(self.vmctx_items.len(), self.vmctx.len());
         for (idx, name) in self.vmctx_items.iter().enumerate() {
-            let addr = match self.get_symbol(*name) {
-                Symbol::Func(func) => unsafe { self.code.as_ptr().offset(func.offset as isize) },
-                Symbol::Heap(heap) => heap.memory.as_ptr(),
+            let addr = match self.get_item(*name) {
+                Item::Func(func) => panic!("VMContext does not support function addresses"),
+                Item::Heap(heap) => heap.memory.as_ptr(),
             };
             self.vmctx[idx] = addr;
         }
     }
 
-    fn get_func_from_name(&self, name: Name) -> Option<&Func> {
-        match self.get_symbol(name) {
-            Symbol::Func(func) => Some(func),
+    fn get_func(&self, item: ItemRef) -> Option<&Func> {
+        match self.get_item(item) {
+            Item::Func(func) => Some(func),
             _ => None,
         }
     }
 
-    fn get_symbol(&self, name: Name) -> Symbol<'_, Alloc> {
-        match name {
-            Name::Imported { from, item } => todo!(), // Imports are not supported yet
-            Name::Owned(item) => match item {
-                crate::traits::ModuleItem::Func(idx) => Symbol::Func(&self.funcs[idx]),
-                crate::traits::ModuleItem::Heap(idx) => Symbol::Heap(&self.heaps[idx]),
-            },
+    fn get_item(&self, item: ItemRef) -> Item<'_, Alloc> {
+        match item {
+            ItemRef::Func(idx) => Item::Func(&self.funcs[idx]),
+            ItemRef::Heap(idx) => Item::Heap(&self.heaps[idx]),
         }
     }
 }

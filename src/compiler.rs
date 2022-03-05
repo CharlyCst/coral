@@ -7,8 +7,8 @@ use cranelift_wasm::{translate_module, ModuleTranslationState};
 use crate::collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
 use crate::env;
 use crate::traits::{Compiler, CompilerError, CompilerResult};
-use crate::traits::{FuncIndex, FunctionInfo, HeapIndex, HeapInfo, HeapKind, Name, Reloc};
-use crate::traits::{Module, ModuleItem};
+use crate::traits::{FuncIndex, FuncInfo, HeapIndex, HeapInfo, HeapKind, Reloc};
+use crate::traits::{ItemRef, Module};
 
 // ———————————————————————————————— Compiler ———————————————————————————————— //
 
@@ -58,6 +58,12 @@ impl Compiler for X86_64Compiler {
         let mut stack_maps: Box<dyn cranelift_codegen::binemit::StackMapSink> =
             Box::new(cranelift_codegen::binemit::NullStackMapSink {});
 
+        // Declare imported functions.
+        for func in self.module.info.imported_funs.into_iter() {
+            let fun_info = &self.module.info.funs[func.index];
+            mod_info.register_imported_func(&fun_info.export_names, func.module, func.name);
+        }
+
         for (_, (func, func_idx)) in self.module.info.fun_bodies.into_iter() {
             // Compile and emit to memory
             let offset = code.len() as u32;
@@ -91,34 +97,45 @@ impl Compiler for X86_64Compiler {
 // ————————————————————————————————— Module ————————————————————————————————— //
 
 pub struct ModuleInfo {
-    exported_names: HashMap<String, Name>,
-    items: HashMap<Name, ModuleItem>,
-    funs: PrimaryMap<FuncIndex, FunctionInfo>,
+    exported_items: HashMap<String, ItemRef>,
+    funcs: PrimaryMap<FuncIndex, FuncInfo>,
     heaps: PrimaryMap<HeapIndex, HeapInfo>,
 }
 
 impl ModuleInfo {
     pub fn new() -> Self {
         Self {
-            exported_names: HashMap::new(),
-            items: HashMap::new(),
-            funs: PrimaryMap::new(),
+            exported_items: HashMap::new(),
+            funcs: PrimaryMap::new(),
             heaps: PrimaryMap::new(),
         }
     }
 
-    fn register_func(&mut self, exported_names: &Vec<String>, offset: u32) -> Name {
-        let func_info = FunctionInfo { offset };
-        let idx = self.funs.push(func_info);
-        let name = Name::owned_func(idx);
-        self.items.insert(name, ModuleItem::Func(idx));
+    fn register_func(&mut self, exported_names: &Vec<String>, offset: u32) {
+        let func_info = FuncInfo::Owned { offset };
+        let idx = self.funcs.push(func_info);
+        let item = ItemRef::Func(idx);
 
         // Export the function, if required
         for exported_name in exported_names {
-            self.exported_names.insert(exported_name.to_owned(), name);
+            self.exported_items.insert(exported_name.to_owned(), item);
         }
+    }
 
-        name
+    fn register_imported_func(
+        &mut self,
+        exported_names: &Vec<String>,
+        module: String,
+        name: String,
+    ) {
+        let func_info = FuncInfo::Imported { module, name };
+        let idx = self.funcs.push(func_info);
+        let item = ItemRef::Func(idx);
+
+        // Export the function, if required
+        for exported_name in exported_names {
+            self.exported_items.insert(exported_name.to_owned(), item);
+        }
     }
 
     fn register_heap(&mut self, min_size: u32, max_size: Option<u32>) {
@@ -135,12 +152,12 @@ impl ModuleInfo {
 }
 
 pub struct SimpleModule {
-    exported_names: HashMap<String, Name>,
-    funcs: FrozenMap<FuncIndex, FunctionInfo>,
+    exported_names: HashMap<String, ItemRef>,
+    funcs: FrozenMap<FuncIndex, FuncInfo>,
     heaps: FrozenMap<HeapIndex, HeapInfo>,
     code: Vec<u8>,
     relocs: Vec<Reloc>,
-    vmctx_layout: Vec<Name>,
+    vmctx_layout: Vec<ItemRef>,
 }
 
 impl SimpleModule {
@@ -149,12 +166,12 @@ impl SimpleModule {
         let heaps = &info.heaps;
         let mut vmctx_layout = Vec::with_capacity(heaps.len());
         for heap_idx in heaps.keys() {
-            vmctx_layout.push(Name::owned_heap(heap_idx));
+            vmctx_layout.push(ItemRef::Heap(heap_idx));
         }
 
         Self {
-            exported_names: info.exported_names,
-            funcs: FrozenMap::freeze(info.funs),
+            exported_names: info.exported_items,
+            funcs: FrozenMap::freeze(info.funcs),
             heaps: FrozenMap::freeze(info.heaps),
             code,
             relocs,
@@ -172,7 +189,7 @@ impl Module for SimpleModule {
         &self.heaps
     }
 
-    fn funcs(&self) -> &FrozenMap<FuncIndex, FunctionInfo> {
+    fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo> {
         &self.funcs
     }
 
@@ -180,11 +197,11 @@ impl Module for SimpleModule {
         &self.relocs
     }
 
-    fn vmctx_items(&self) -> &[Name] {
+    fn vmctx_items(&self) -> &[ItemRef] {
         &self.vmctx_layout
     }
 
-    fn public_symbols(&self) -> &HashMap<String, Name> {
+    fn public_items(&self) -> &HashMap<String, ItemRef> {
         &self.exported_names
     }
 }
@@ -229,13 +246,14 @@ impl RelocationHandler {
         self.func_offset = offset;
     }
 
-    pub fn translate(&self, name: &ir::ExternalName) -> Name {
+    /// Translate an ir::ExternalName to an item reference.
+    pub fn translate(&self, name: &ir::ExternalName) -> ItemRef {
         match name {
             ir::ExternalName::User { index, .. } => {
                 // WARNING: we are relying on the fact that ir::ExternalName are attributed in the
                 // **exact** same order as FuncIndex. This is a contract between the
                 // ModuleEnvironment and the Compiler.
-                Name::Owned(ModuleItem::Func(FuncIndex::new(*index as usize)))
+                ItemRef::Func(FuncIndex::new(*index as usize))
             }
             _ => panic!("Unexpected name!"),
         }
@@ -264,7 +282,7 @@ impl RelocSink for RelocationHandler {
 
         self.relocs.push(Reloc {
             offset: self.func_offset + offset as u32,
-            name: self.translate(name),
+            item: self.translate(name),
             kind,
             addend,
         });

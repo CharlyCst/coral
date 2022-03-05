@@ -1,6 +1,5 @@
 #![allow(unused_variables)]
 
-// use cranelift_wasm::{ModuleEnvironment, FuncTranslator};
 use cranelift_codegen::cursor;
 use cranelift_codegen::entity::{EntityRef, PrimaryMap};
 use cranelift_codegen::ir;
@@ -38,11 +37,20 @@ impl<T> Exportable<T> {
     }
 }
 
+pub struct ImportedFunc {
+    pub index: FuncIndex,
+    // TODO: intern strings to avoid duplication
+    pub module: String,
+    pub name: String,
+}
+
 pub struct ModuleInfo {
     /// TypeID -> Type
     pub fun_types: PrimaryMap<TypeIndex, ir::Signature>,
     /// FunID -> TypeID
     pub funs: PrimaryMap<FuncIndex, Exportable<TypeIndex>>,
+    /// The imported functions
+    pub imported_funs: Vec<ImportedFunc>,
     /// Function bodies
     pub fun_bodies: PrimaryMap<DefinedFuncIndex, (ir::Function, FuncIndex)>,
     /// The registered memories
@@ -76,6 +84,7 @@ impl ModuleEnvironment {
         let info = ModuleInfo {
             fun_types: PrimaryMap::new(),
             funs: PrimaryMap::new(),
+            imported_funs: Vec::new(),
             fun_bodies: PrimaryMap::new(),
             memories: Vec::new(),
             target_config,
@@ -131,7 +140,17 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         module: &'data str,
         field: Option<&'data str>,
     ) -> wasm::WasmResult<()> {
-        todo!()
+        // TODO
+        // todo!()
+        eprintln!("Func Import {:?}", index);
+        let index = self.info.funs.push(Exportable::new(index));
+        self.info.imported_funs.push(ImportedFunc {
+            index,
+            module: module.to_string(),
+            // TODO: can field be None?
+            name: field.unwrap().to_string(),
+        });
+        Ok(())
     }
 
     fn declare_table_import(
@@ -249,7 +268,9 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         body: wasm::wasmparser::FunctionBody<'data>,
     ) -> wasm::WasmResult<()> {
         let mut fun_env = self.info.get_fun_env();
-        let func_index = FuncIndex::new(self.info.fun_bodies.len());
+        // the local functions are declared after the imported ones, and the declaration order is
+        // the same for the functions and their bodies.
+        let func_index = FuncIndex::new(self.info.imported_funs.len() + self.info.fun_bodies.len());
         let name = get_func_name(func_index);
         let sig = self.info.get_func_sig(func_index);
         let mut fun = ir::Function::with_name_signature(name, sig.clone());
@@ -323,7 +344,9 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
             base,
             min_size: WASM_PAGE_SIZE.into(),
             offset_guard_size: 0.into(),
-            style: ir::HeapStyle::Static { bound: (2 * WASM_PAGE_SIZE).into() },
+            style: ir::HeapStyle::Static {
+                bound: (2 * WASM_PAGE_SIZE).into(),
+            },
             index_type: ir::types::I32, // TODO: handle wasm64
         });
         Ok(heap)
