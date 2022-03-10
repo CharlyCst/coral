@@ -9,12 +9,12 @@ pub struct LibcCodeAllocator();
 unsafe impl core::alloc::Allocator for LibcCodeAllocator {
     fn allocate(
         &self,
-        _layout: std::alloc::Layout,
-    ) -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError> {
+        _layout: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
         todo!()
     }
 
-    unsafe fn deallocate(&self, _ptr: std::ptr::NonNull<u8>, _layout: std::alloc::Layout) {
+    unsafe fn deallocate(&self, _ptr: core::ptr::NonNull<u8>, _layout: core::alloc::Layout) {
         // We just leak the memory
     }
 }
@@ -26,12 +26,12 @@ pub struct LibcHeapAllocator();
 unsafe impl core::alloc::Allocator for LibcHeapAllocator {
     fn allocate(
         &self,
-        _layout: std::alloc::Layout,
-    ) -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError> {
+        _layout: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
         todo!()
     }
 
-    unsafe fn deallocate(&self, _ptr: std::ptr::NonNull<u8>, _layout: std::alloc::Layout) {
+    unsafe fn deallocate(&self, _ptr: core::ptr::NonNull<u8>, _layout: core::alloc::Layout) {
         // We just leak the memory
     }
 }
@@ -75,7 +75,7 @@ impl traits::Allocator for LibcAllocator {
         if code_size == 0 {
             return unsafe {
                 Box::from_raw_in(
-                    std::slice::from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0),
+                    core::slice::from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0),
                     LibcCodeAllocator(),
                 )
             };
@@ -89,7 +89,7 @@ impl traits::Allocator for LibcAllocator {
 
         unsafe {
             Box::from_raw_in(
-                std::slice::from_raw_parts_mut(ptr, code_size),
+                core::slice::from_raw_parts_mut(ptr, code_size),
                 LibcCodeAllocator(),
             )
         }
@@ -128,7 +128,7 @@ impl traits::Allocator for LibcAllocator {
         if min_size == 0 {
             return unsafe {
                 Box::from_raw_in(
-                    std::slice::from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0),
+                    core::slice::from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0),
                     LibcHeapAllocator(),
                 )
             };
@@ -138,7 +138,7 @@ impl traits::Allocator for LibcAllocator {
 
         unsafe {
             Box::from_raw_in(
-                std::slice::from_raw_parts_mut(ptr, min_size as usize),
+                core::slice::from_raw_parts_mut(ptr, min_size as usize),
                 LibcHeapAllocator(),
             )
         }

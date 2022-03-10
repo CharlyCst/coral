@@ -6,6 +6,7 @@ mod collections;
 mod compiler;
 mod env;
 mod instances;
+mod modules;
 mod traits;
 
 use instances::Instance;
@@ -16,25 +17,30 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() <= 1 {
-        println!("Usage: {} <wasm_file> [<import_1_name> <import_1_wasm_file> ...]", args[0]);
+        println!(
+            "Usage: {} <wasm_file> [<import_1_name> <import_1_wasm_file> ...]",
+            args[0]
+        );
         return;
     } else {
         println!("Compiling: {}", &args[1]);
     }
 
     let alloc = alloc::LibcAllocator::new();
-    let module = compile(&args[1]);
 
     // Iterate over the args 2 by 2, the first item is the module name, the second the file
     let imported_modules = args[2..]
         .windows(2)
         .step_by(2)
-        .map(|arg| (arg[0].clone(), compile(&arg[1])))
-        .collect::<Vec<(String, compiler::SimpleModule)>>();
+        .map(|arg| {
+            let name = arg[0].clone();
+            eprintln!("Import: '{}'", &name);
+            (name, compile(&arg[1]))
+        })
+        .collect::<Vec<(String, modules::SimpleModule)>>();
     let imported_instances = imported_modules
         .iter()
         .map(|(name, module)| {
-            eprintln!("Dep: '{}'", name);
             (
                 name.as_str(),
                 Instance::instantiate(module, vec![], &alloc).unwrap(),
@@ -42,6 +48,7 @@ fn main() {
         })
         .collect::<Vec<(&str, Instance<alloc::LibcAllocator>)>>();
 
+    let module = compile(&args[1]);
     let instance = Instance::instantiate(&module, imported_instances, &alloc).unwrap();
 
     // Great, now let's try to call that function by hand
@@ -66,7 +73,7 @@ fn main() {
     }
 }
 
-fn compile(file: &str) -> compiler::SimpleModule {
+fn compile(file: &str) -> modules::SimpleModule {
     let bytecode = match fs::read(file) {
         Ok(b) => b,
         Err(err) => {

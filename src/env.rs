@@ -140,9 +140,6 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         module: &'data str,
         field: Option<&'data str>,
     ) -> wasm::WasmResult<()> {
-        // TODO
-        // todo!()
-        eprintln!("Func Import {:?}", index);
         let index = self.info.funs.push(Exportable::new(index));
         self.info.imported_funs.push(ImportedFunc {
             index,
@@ -332,7 +329,6 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         index: wasm::MemoryIndex,
     ) -> wasm::WasmResult<ir::Heap> {
         // Heaps addresses are stored in the VMContext
-        println!("Heap: {:?}", func);
         let vmctx = self.vmctx(func);
         let base = func.create_global_value(ir::GlobalValueData::Load {
             base: vmctx,
