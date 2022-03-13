@@ -4,12 +4,13 @@ use cranelift_codegen::isa;
 use cranelift_codegen::settings;
 use cranelift_wasm::{translate_module, ModuleTranslationState};
 
-use crate::collections::EntityRef;
+use crate::collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
 use crate::env;
 use crate::modules::{ModuleInfo, SimpleModule};
 use crate::traits::ItemRef;
 use crate::traits::{Compiler, CompilerError, CompilerResult};
-use crate::traits::{FuncIndex, Reloc};
+use crate::traits::{FuncIndex, FuncInfo, Reloc};
+use crate::traits::{HeapInfo, HeapKind};
 
 // ———————————————————————————————— Compiler ———————————————————————————————— //
 
@@ -51,7 +52,56 @@ impl Compiler for X86_64Compiler {
     }
 
     fn compile(self) -> CompilerResult<SimpleModule> {
-        let mut mod_info = ModuleInfo::new();
+        let module_info = self.module.info;
+        let mut imported_funcs = module_info.imported_funcs;
+        let modules = FrozenMap::freeze(module_info.modules);
+
+        // Build the functions info
+        let mut funcs = PrimaryMap::with_capacity(module_info.funcs.len());
+        let mut funcs_names = SecondaryMap::new();
+        for (func_idx, func_names) in module_info.funcs {
+            // We move out with `take` to avoid cloning the name
+            let func = if let Some(import_info) = imported_funcs[func_idx].take() {
+                FuncInfo::Imported {
+                    module: import_info.module,
+                    name: import_info.name,
+                }
+            } else {
+                FuncInfo::Owned {
+                    // WARNING: The offset **must** be set once known!
+                    offset: 0,
+                }
+            };
+            let func_idx = funcs.push(func);
+            funcs_names[func_idx] = func_names.export_names;
+        }
+        let funcs = FrozenMap::freeze(funcs);
+
+        // Build the heaps info
+        let mut heaps = PrimaryMap::new();
+        for heap in module_info.heaps {
+            let min_size = heap.minimum as u32;
+            let heap = match heap.maximum {
+                Some(max_size) => HeapInfo {
+                    min_size,
+                    kind: HeapKind::Static {
+                        max_size: max_size as u32,
+                    },
+                },
+                None => HeapInfo {
+                    min_size,
+                    kind: HeapKind::Dynamic,
+                },
+            };
+            heaps.push(heap);
+        }
+        let heaps = FrozenMap::freeze(heaps);
+
+        let mut mod_info = ModuleInfo::new(funcs, heaps, modules);
+        for (func_idx, names) in funcs_names.iter() {
+            mod_info.export_func(func_idx, names);
+        }
+
         let mut code = Vec::new();
         let mut relocs = RelocationHandler::new();
         let mut traps: Box<dyn cranelift_codegen::binemit::TrapSink> = Box::new(TrapHandler::new());
@@ -59,17 +109,14 @@ impl Compiler for X86_64Compiler {
         let mut stack_maps: Box<dyn cranelift_codegen::binemit::StackMapSink> =
             Box::new(cranelift_codegen::binemit::NullStackMapSink {});
 
-        // Declare imported functions.
-        for func in self.module.info.imported_funs.into_iter() {
-            let fun_info = &self.module.info.funs[func.index];
-            mod_info.register_imported_func(&fun_info.export_names, func.module, func.name);
-        }
-
-        for (_, (func, func_idx)) in self.module.info.fun_bodies.into_iter() {
-            // Compile and emit to memory
+        // Compile and emit to memory
+        for (_, (func, func_idx)) in module_info.func_bodies.into_iter() {
             let offset = code.len() as u32;
-            let fun_info = &self.module.info.funs[func_idx];
-            mod_info.register_func(&fun_info.export_names, offset);
+            // transmute index from cranelift_wasm to internal
+            let func_idx = FuncIndex::new(func_idx.index());
+            mod_info.set_func_offset(func_idx, offset);
+            // let fun_info = &self.module.info.funcs[func_idx];
+            // mod_info.register_func(&fun_info.export_names, offset);
             let mut ctx = cranelift_codegen::Context::for_function(func);
 
             relocs.set_offset(offset);
@@ -85,10 +132,6 @@ impl Compiler for X86_64Compiler {
                 eprintln!("Err: {:?}", err);
                 CompilerError::FailedToCompile
             })?; // TODO: better error handling
-        }
-
-        for memory in self.module.info.memories {
-            mod_info.register_heap(memory.minimum as u32, memory.maximum.map(|x| x as u32));
         }
 
         Ok(SimpleModule::new(mod_info, code, relocs.relocs))

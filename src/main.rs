@@ -34,8 +34,9 @@ fn main() {
         .step_by(2)
         .map(|arg| {
             let name = arg[0].clone();
-            eprintln!("Import: '{}'", &name);
-            (name, compile(&arg[1]))
+            let path = &arg[1];
+            eprintln!("Import: {} from {}", &name, path);
+            (name, compile(path))
         })
         .collect::<Vec<(String, modules::SimpleModule)>>();
     let imported_instances = imported_modules

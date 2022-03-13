@@ -70,26 +70,28 @@ impl<Alloc: Allocator> Instance<Alloc> {
     where
         Alloc: Allocator,
     {
-        let mut imports = PrimaryMap::with_capacity(import_from.len());
-        let imports_refs = import_from
+        let mut import_from = import_from
             .into_iter()
-            .map(|(name, instance)| {
-                let idx: ImportIndex = imports.push(instance);
-                (name, idx)
-            })
-            .collect::<Vec<(&str, ImportIndex)>>();
-        let imports = FrozenMap::freeze(imports);
+            .map(|x| Some(x))
+            .collect::<Vec<Option<(&str, Instance<Alloc>)>>>();
+        let imports = module.imports().try_map(|module| {
+            // Pick the firts matching module
+            for item in import_from.iter_mut() {
+                if let Some((item_name, instance)) = item {
+                    if item_name == module {
+                        let (_, instance) = item.take().unwrap();
+                        return Ok(instance);
+                    }
+                }
+            }
+            Err(ModuleError::FailedToInstantiate)
+        })?;
 
         let funcs = module.funcs().try_map(|func_info| match func_info {
             FuncInfo::Owned { offset } => Ok(Func::Owned { offset: *offset }),
             FuncInfo::Imported { module, name } => {
                 // Look for the corresponding module
-                // NOTE: maybe we want a smarter lookup strategy?
-                let (_, import_idx) = imports_refs
-                    .iter()
-                    .find(|(m, idx)| m == module)
-                    .ok_or(ModuleError::FailedToInstantiate)?;
-                let instance = &imports[*import_idx];
+                let instance = &imports[*module];
                 let func_ref = instance
                     .items
                     .get(name)
@@ -101,7 +103,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
                 let _func = &instance.funcs[func_ref];
 
                 Ok(Func::Imported {
-                    from: *import_idx,
+                    from: *module,
                     index: func_ref,
                 })
             }
@@ -164,12 +166,12 @@ impl<Alloc: Allocator> Instance<Alloc> {
 
     fn relocate(&mut self, module: &impl Module) -> ModuleResult<()> {
         for reloc in module.relocs() {
-            let value = match reloc.item {
-                ItemRef::Func(func) => self.get_func_addr(func),
+            let base = match reloc.item {
+                ItemRef::Func(func) => self.get_func_addr(func) as i64,
                 // Only functions are supported by relocations
                 _ => return Err(ModuleError::FailedToInstantiate),
             };
-            let value = value + reloc.addend;
+            let value = base + reloc.addend;
 
             let offset = reloc.offset as usize;
             match reloc.kind {
@@ -178,7 +180,11 @@ impl<Alloc: Allocator> Instance<Alloc> {
                     self.code[offset..][..8].copy_from_slice(&value.to_le_bytes());
                 }
                 RelocKind::X86PCRel4 => todo!(),
-                RelocKind::X86CallPCRel4 => todo!(),
+                RelocKind::X86CallPCRel4 => {
+                    let pc = self.code.as_ptr().wrapping_add(reloc.offset as usize) as i64;
+                    let pc_relative = (value - pc) as i32;
+                    self.code[offset..][..4].copy_from_slice(&pc_relative.to_le_bytes());
+                }
                 RelocKind::X86CallPLTRel4 => todo!(),
                 RelocKind::X86GOTPCRel4 => todo!(),
                 RelocKind::Arm32Call => todo!(),
@@ -196,9 +202,9 @@ impl<Alloc: Allocator> Instance<Alloc> {
 
     /// Return the address of a function.
     /// Imported functions are resolved though recursive lookups.
-    fn get_func_addr(&self, func: FuncIndex) -> i64 {
+    fn get_func_addr(&self, func: FuncIndex) -> *const u8 {
         match &self.funcs[func] {
-            Func::Owned { offset } => self.code.as_ptr() as i64 + *offset as i64,
+            Func::Owned { offset } => self.code.as_ptr().wrapping_add(*offset as usize),
             Func::Imported { from, index } => {
                 let instance = &self.imports[*from];
                 instance.get_func_addr(*index)
@@ -206,15 +212,16 @@ impl<Alloc: Allocator> Instance<Alloc> {
         }
     }
 
-    // Create the VMContext, a structure containing pointers to the VM's items and that can be
-    // queried during code execution.
+    // Update the VMContext: a structure containing pointers to the VM's items that can be queried
+    // during code execution.
     fn update_vmctx(&mut self) {
         // WARNING: `vmctx` and `vmctx_items` must have the exact same size here!
         assert_eq!(self.vmctx_items.len(), self.vmctx.len());
         for (idx, name) in self.vmctx_items.iter().enumerate() {
-            let addr = match self.get_item(*name) {
-                Item::Func(func) => panic!("VMContext does not support function addresses"),
-                Item::Heap(heap) => heap.memory.as_ptr(),
+            let addr = match name {
+                ItemRef::Func(idx) => self.get_func_addr(*idx),
+                ItemRef::Heap(idx) => self.heaps[*idx].memory.as_ptr(),
+                ItemRef::Import(idx) => self.imports[*idx].vmctx.as_ptr() as *const u8,
             };
             self.vmctx[idx] = addr;
         }
@@ -231,6 +238,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
         match item {
             ItemRef::Func(idx) => Item::Func(&self.funcs[idx]),
             ItemRef::Heap(idx) => Item::Heap(&self.heaps[idx]),
+            ItemRef::Import(idx) => todo!(),
         }
     }
 }

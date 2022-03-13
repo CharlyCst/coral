@@ -66,31 +66,35 @@ entity_impl!(ImportIndex);
 pub enum ItemRef {
     Func(FuncIndex),
     Heap(HeapIndex),
+    Import(ImportIndex),
 }
 
 impl ItemRef {
     pub fn as_func(self) -> Option<FuncIndex> {
         match self {
             ItemRef::Func(idx) => Some(idx),
-            _ => None
+            _ => None,
         }
     }
 }
 
 pub enum FuncInfo {
     // TODO: add signatures
-    Owned {
-        offset: u32,
-    },
-    Imported {
-        module: String,
-        name: String,
+    Owned { offset: u32 },
+    Imported { module: ImportIndex, name: String },
+}
+
+impl FuncInfo {
+    pub fn is_imported(&self) -> bool {
+        match self {
+            FuncInfo::Imported { .. } => true,
+            FuncInfo::Owned { .. } => false,
+        }
     }
 }
 
 pub struct HeapInfo {
     pub min_size: u32,
-    pub max_size: Option<u32>,
     pub kind: HeapKind,
 }
 
@@ -120,6 +124,7 @@ pub trait Module {
     fn code(&self) -> &[u8];
     fn heaps(&self) -> &FrozenMap<HeapIndex, HeapInfo>;
     fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo>;
+    fn imports(&self) -> &FrozenMap<ImportIndex, String>;
     fn relocs(&self) -> &[Reloc];
     fn public_items(&self) -> &HashMap<String, ItemRef>;
     fn vmctx_items(&self) -> &[ItemRef];

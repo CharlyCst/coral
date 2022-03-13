@@ -1,12 +1,15 @@
 #![allow(unused_variables)]
 
 use cranelift_codegen::cursor;
-use cranelift_codegen::entity::{EntityRef, PrimaryMap};
 use cranelift_codegen::ir;
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_wasm as wasm;
+
 use cranelift_wasm::{DefinedFuncIndex, FuncIndex, TargetEnvironment, TypeIndex, WasmType};
+
+use crate::collections::{EntityRef, PrimaryMap, SecondaryMap};
+use crate::traits::ImportIndex;
 
 const WASM_PAGE_SIZE: u64 = 0x1000;
 
@@ -37,32 +40,39 @@ impl<T> Exportable<T> {
     }
 }
 
+#[derive(Clone)]
 pub struct ImportedFunc {
-    pub index: FuncIndex,
-    // TODO: intern strings to avoid duplication
-    pub module: String,
+    /// The index of the module.
+    pub module: ImportIndex,
+    /// The name of the imported function inside its module.
     pub name: String,
+    /// Index of the function in the VMContext.
+    pub vmctx_idx: i32,
 }
 
 pub struct ModuleInfo {
     /// TypeID -> Type
-    pub fun_types: PrimaryMap<TypeIndex, ir::Signature>,
+    pub func_types: PrimaryMap<TypeIndex, ir::Signature>,
     /// FunID -> TypeID
-    pub funs: PrimaryMap<FuncIndex, Exportable<TypeIndex>>,
-    /// The imported functions
-    pub imported_funs: Vec<ImportedFunc>,
+    pub funcs: PrimaryMap<FuncIndex, Exportable<TypeIndex>>,
+    /// FunID -> Option<imported_func_info>
+    pub imported_funcs: SecondaryMap<FuncIndex, Option<ImportedFunc>>,
     /// Function bodies
-    pub fun_bodies: PrimaryMap<DefinedFuncIndex, (ir::Function, FuncIndex)>,
+    pub func_bodies: PrimaryMap<DefinedFuncIndex, (ir::Function, FuncIndex)>,
     /// The registered memories
-    pub memories: Vec<wasm::Memory>,
-    // Configuration of the target
+    pub heaps: Vec<wasm::Memory>,
+    /// The list of imported modules
+    pub modules: PrimaryMap<ImportIndex, String>,
+    /// The number of imported funcs. The defined functions goes after the imported ones.
+    nb_imported_funcs: usize,
+    /// Configuration of the target
     target_config: TargetFrontendConfig,
 }
 
 impl ModuleInfo {
     fn get_func_sig(&self, fun_index: FuncIndex) -> &ir::Signature {
-        let type_idx = self.funs[fun_index].entity;
-        &self.fun_types[type_idx]
+        let type_idx = self.funcs[fun_index].entity;
+        &self.func_types[type_idx]
     }
 
     fn get_fun_env(&self) -> FunctionEnvironment {
@@ -71,6 +81,28 @@ impl ModuleInfo {
             info: self,
             vmctx: None,
         }
+    }
+
+    /// Return the index of a module. The module is registered if it hasn't been seen yet.
+    fn get_module_idx(&mut self, module: &str) -> ImportIndex {
+        // TODO: we might want to get rid of the linear scan here
+        if let Some((idx, _)) = self
+            .modules
+            .iter()
+            .find(|(idx, known_module)| module == known_module.as_str())
+        {
+            idx
+        } else {
+            self.modules.push(module.to_owned())
+        }
+    }
+
+    fn get_vmctx_func_offset(&self, func: &ImportedFunc) -> i32 {
+        self.heaps.len() as i32 + func.vmctx_idx
+    }
+
+    fn get_vmctx_imported_vmctx_offset(&self, module: ImportIndex) -> i32 {
+        (self.heaps.len() + self.nb_imported_funcs + module.index()) as i32
     }
 }
 
@@ -82,11 +114,13 @@ pub struct ModuleEnvironment {
 impl ModuleEnvironment {
     pub fn new(target_config: TargetFrontendConfig) -> Self {
         let info = ModuleInfo {
-            fun_types: PrimaryMap::new(),
-            funs: PrimaryMap::new(),
-            imported_funs: Vec::new(),
-            fun_bodies: PrimaryMap::new(),
-            memories: Vec::new(),
+            func_types: PrimaryMap::new(),
+            funcs: PrimaryMap::new(),
+            imported_funcs: SecondaryMap::new(),
+            func_bodies: PrimaryMap::new(),
+            heaps: Vec::new(),
+            modules: PrimaryMap::new(),
+            nb_imported_funcs: 0,
             target_config,
         };
 
@@ -130,22 +164,24 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         ));
         sig.returns
             .extend(wasm_func_type.returns().iter().map(&mut wasm_to_ir));
-        self.info.fun_types.push(sig);
+        self.info.func_types.push(sig);
         Ok(())
     }
 
     fn declare_func_import(
         &mut self,
-        index: wasm::TypeIndex,
+        ty_idx: wasm::TypeIndex,
         module: &'data str,
         field: Option<&'data str>,
     ) -> wasm::WasmResult<()> {
-        let index = self.info.funs.push(Exportable::new(index));
-        self.info.imported_funs.push(ImportedFunc {
-            index,
-            module: module.to_string(),
-            // TODO: can field be None?
-            name: field.unwrap().to_string(),
+        let index = self.info.funcs.push(Exportable::new(ty_idx));
+        self.info.nb_imported_funcs += 1;
+        let vmctx_idx = self.info.nb_imported_funcs as i32;
+        let module_idx = self.info.get_module_idx(module);
+        self.info.imported_funcs[index] = Some(ImportedFunc {
+            module: module_idx,
+            name: field.unwrap().to_string(), // TODO: can field be None?
+            vmctx_idx,
         });
         Ok(())
     }
@@ -177,8 +213,8 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         todo!()
     }
 
-    fn declare_func_type(&mut self, index: wasm::TypeIndex) -> wasm::WasmResult<()> {
-        self.info.funs.push(Exportable::new(index));
+    fn declare_func_type(&mut self, ty_idx: wasm::TypeIndex) -> wasm::WasmResult<()> {
+        self.info.funcs.push(Exportable::new(ty_idx));
         Ok(())
     }
 
@@ -188,7 +224,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
 
     fn declare_memory(&mut self, memory: wasm::Memory) -> wasm::WasmResult<()> {
         eprintln!("{:?}", &memory);
-        self.info.memories.push(memory);
+        self.info.heaps.push(memory);
         Ok(())
     }
 
@@ -201,7 +237,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         func_index: wasm::FuncIndex,
         name: &'data str,
     ) -> wasm::WasmResult<()> {
-        self.info.funs[func_index].export_as(name.to_string());
+        self.info.funcs[func_index].export_as(name.to_string());
         Ok(())
     }
 
@@ -267,13 +303,13 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         let mut fun_env = self.info.get_fun_env();
         // the local functions are declared after the imported ones, and the declaration order is
         // the same for the functions and their bodies.
-        let func_index = FuncIndex::new(self.info.imported_funs.len() + self.info.fun_bodies.len());
+        let func_index = FuncIndex::new(self.info.nb_imported_funcs + self.info.func_bodies.len());
         let name = get_func_name(func_index);
         let sig = self.info.get_func_sig(func_index);
         let mut fun = ir::Function::with_name_signature(name, sig.clone());
         self.translator
             .translate_body(&mut validator, body, &mut fun, &mut fun_env)?;
-        self.info.fun_bodies.push((fun, func_index));
+        self.info.func_bodies.push((fun, func_index));
         Ok(())
     }
 
@@ -376,26 +412,57 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         Ok(func.import_function(ir::ExtFuncData {
             name,
             signature,
-            colocated: false, // TODO: set that to true if the func lives in the same module
+            colocated: self.info.imported_funcs[index].is_none(),
         }))
     }
 
     fn translate_call(
         &mut self,
         mut pos: cursor::FuncCursor,
-        _callee_index: FuncIndex,
+        callee_idx: FuncIndex,
         callee: ir::FuncRef,
         call_args: &[ir::Value],
     ) -> wasm::WasmResult<ir::Inst> {
-        // Append the vmctx to the call arguments
-        let caller_vmctx = pos
-            .func
-            .special_param(ir::ArgumentPurpose::VMContext)
-            .unwrap();
-        let mut real_call_args = Vec::with_capacity(call_args.len() + 1);
-        real_call_args.extend(call_args);
-        real_call_args.push(caller_vmctx);
-        Ok(pos.ins().call(callee, &real_call_args))
+        // There is a distinction for functions defined inside and outside the module.
+        // Functions defined inside can be called directly, whereas the context must be changed for
+        // functions defined outside.
+        if let Some(func) = &self.info.imported_funcs[callee_idx] {
+            // Indirect call
+            let vmctx = self.vmctx(pos.func);
+            let func_offset = self.info.get_vmctx_func_offset(func);
+            let vmctx_offset = self.info.get_vmctx_imported_vmctx_offset(func.module);
+            let func_addr = pos.func.create_global_value(ir::GlobalValueData::Load {
+                base: vmctx,
+                offset: func_offset.into(),
+                global_type: self.pointer_type(),
+                readonly: false, // Because we might want to support hot swapping in the future
+            });
+            let callee_vmctx = pos.func.create_global_value(ir::GlobalValueData::Load {
+                base: vmctx,
+                offset: vmctx_offset.into(),
+                global_type: self.pointer_type(),
+                readonly: false, // Because we might want to support hot swapping in the future
+            });
+            let callee_vmctx = pos.ins().global_value(self.pointer_type(), callee_vmctx);
+
+            // Append the called module's vmctx to the call arguments
+            let mut real_call_args = Vec::with_capacity(call_args.len() + 1);
+            real_call_args.extend(call_args);
+            real_call_args.push(callee_vmctx);
+            Ok(pos.ins().call(callee, &real_call_args))
+        } else {
+            // Direct call
+            //
+            // Append the vmctx to the call arguments and perform a direct call
+            let caller_vmctx = pos
+                .func
+                .special_param(ir::ArgumentPurpose::VMContext)
+                .unwrap();
+            let mut real_call_args = Vec::with_capacity(call_args.len() + 1);
+            real_call_args.extend(call_args);
+            real_call_args.push(caller_vmctx);
+            Ok(pos.ins().call(callee, &real_call_args))
+        }
     }
 
     fn translate_call_indirect(

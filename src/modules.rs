@@ -1,61 +1,46 @@
-use crate::collections::{FrozenMap, HashMap, PrimaryMap};
-use crate::traits::{FuncIndex, FuncInfo, HeapIndex, HeapInfo, HeapKind, Reloc};
+use crate::collections::{FrozenMap, HashMap};
+use crate::traits::{FuncIndex, FuncInfo, HeapIndex, HeapInfo, ImportIndex, Reloc};
 use crate::traits::{ItemRef, Module};
 
 // ————————————————————————————————— Module ————————————————————————————————— //
 
 pub struct ModuleInfo {
     exported_items: HashMap<String, ItemRef>,
-    funcs: PrimaryMap<FuncIndex, FuncInfo>,
-    heaps: PrimaryMap<HeapIndex, HeapInfo>,
+    funcs: FrozenMap<FuncIndex, FuncInfo>,
+    heaps: FrozenMap<HeapIndex, HeapInfo>,
+    modules: FrozenMap<ImportIndex, String>,
 }
 
 impl ModuleInfo {
-    pub fn new() -> Self {
+    pub fn new(
+        funcs: FrozenMap<FuncIndex, FuncInfo>,
+        heaps: FrozenMap<HeapIndex, HeapInfo>,
+        modules: FrozenMap<ImportIndex, String>,
+    ) -> Self {
         Self {
             exported_items: HashMap::new(),
-            funcs: PrimaryMap::new(),
-            heaps: PrimaryMap::new(),
+            funcs,
+            heaps,
+            modules,
         }
     }
 
-    pub fn register_func(&mut self, exported_names: &Vec<String>, offset: u32) {
-        let func_info = FuncInfo::Owned { offset };
-        let idx = self.funcs.push(func_info);
-        let item = ItemRef::Func(idx);
+    pub fn set_func_offset(&mut self, func_idx: FuncIndex, offset: u32) {
+        match &mut self.funcs[func_idx] {
+            FuncInfo::Owned {
+                offset: previous_offset,
+                ..
+            } => *previous_offset = offset,
+            &mut FuncInfo::Imported { .. } => panic!("Tried to set offset of imported function"),
+        }
+    }
 
-        // Export the function, if required
+    /// Mark a function as exported under the given list of names.
+    pub fn export_func(&mut self, func_idx: FuncIndex, exported_names: &[String]) {
         for exported_name in exported_names {
-            self.exported_items.insert(exported_name.to_owned(), item);
+            self.exported_items
+                .insert((*exported_name).to_owned(), ItemRef::Func(func_idx));
         }
-    }
-
-    pub fn register_imported_func(
-        &mut self,
-        exported_names: &Vec<String>,
-        module: String,
-        name: String,
-    ) {
-        let func_info = FuncInfo::Imported { module, name };
-        let idx = self.funcs.push(func_info);
-        let item = ItemRef::Func(idx);
-
-        // Export the function, if required
-        for exported_name in exported_names {
-            self.exported_items.insert(exported_name.to_owned(), item);
-        }
-    }
-
-    pub fn register_heap(&mut self, min_size: u32, max_size: Option<u32>) {
-        let kind = match max_size {
-            Some(max_size) => HeapKind::Static { max_size },
-            None => HeapKind::Dynamic,
-        };
-        self.heaps.push(HeapInfo {
-            min_size,
-            max_size,
-            kind,
-        });
     }
 }
 
@@ -63,6 +48,7 @@ pub struct SimpleModule {
     exported_names: HashMap<String, ItemRef>,
     funcs: FrozenMap<FuncIndex, FuncInfo>,
     heaps: FrozenMap<HeapIndex, HeapInfo>,
+    modules: FrozenMap<ImportIndex, String>,
     code: Vec<u8>,
     relocs: Vec<Reloc>,
     vmctx_layout: Vec<ItemRef>,
@@ -71,16 +57,29 @@ pub struct SimpleModule {
 impl SimpleModule {
     pub fn new(info: ModuleInfo, code: Vec<u8>, relocs: Vec<Reloc>) -> Self {
         // Compute the VMContext layout
-        let heaps = &info.heaps;
-        let mut vmctx_layout = Vec::with_capacity(heaps.len());
+        let heaps = info.heaps;
+        let funcs = info.funcs;
+        let modules = info.modules;
+        let nb_imported_funcs = funcs.values().filter(|func| func.is_imported()).count();
+        let mut vmctx_layout = Vec::with_capacity(heaps.len() + nb_imported_funcs + modules.len());
+
         for heap_idx in heaps.keys() {
             vmctx_layout.push(ItemRef::Heap(heap_idx));
+        }
+        for (func_idx, func) in funcs.iter() {
+            if func.is_imported() {
+                vmctx_layout.push(ItemRef::Func(func_idx));
+            }
+        }
+        for import_idx in modules.keys() {
+            vmctx_layout.push(ItemRef::Import(import_idx));
         }
 
         Self {
             exported_names: info.exported_items,
-            funcs: FrozenMap::freeze(info.funcs),
-            heaps: FrozenMap::freeze(info.heaps),
+            funcs,
+            heaps,
+            modules,
             code,
             relocs,
             vmctx_layout,
@@ -101,6 +100,10 @@ impl Module for SimpleModule {
         &self.funcs
     }
 
+    fn imports(&self) -> &FrozenMap<ImportIndex, String> {
+        &self.modules
+    }
+
     fn relocs(&self) -> &[Reloc] {
         &self.relocs
     }
@@ -113,5 +116,3 @@ impl Module for SimpleModule {
         &self.exported_names
     }
 }
-
-

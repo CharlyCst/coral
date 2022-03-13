@@ -57,6 +57,22 @@ where
         }
     }
 
+    pub fn map_enumerate<F, U>(&self, mut f: F) -> FrozenMap<K, U>
+    where
+        F: FnMut(K, &V) -> U,
+    {
+        let elems = self
+            .elems
+            .iter()
+            .enumerate()
+            .map(|(idx, elem)| f(K::new(idx), elem))
+            .collect();
+        FrozenMap {
+            elems,
+            unused: PhantomData,
+        }
+    }
+
     pub fn try_map<F, U, E>(&self, mut f: F) -> Result<FrozenMap<K, U>, E>
     where
         F: FnMut(&V) -> Result<U, E>,
@@ -69,6 +85,14 @@ where
             elems,
             unused: PhantomData,
         })
+    }
+
+    /// Change the type of the index in place.
+    pub fn reindex<Q>(self) -> FrozenMap<Q, V> {
+        FrozenMap {
+            elems: self.elems,
+            unused: PhantomData,
+        }
     }
 
     /// Get the element at `k` if it exists.
@@ -84,6 +108,21 @@ where
     /// Get the number of elements in the map.
     pub fn len(&self) -> usize {
         self.elems.len()
+    }
+
+    /// Iterate over all keys and values in the map.
+    pub fn iter(&self) -> entity::Iter<K, V> {
+        entity::Iter::new(self.elems.iter())
+    }
+
+    /// Iterate over all the values.
+    pub fn values(&self) -> core::slice::Iter<V> {
+        self.elems.iter()
+    }
+
+    /// Iterate over all the keys.
+    pub fn keys(&self) -> entity::Keys<K> {
+        entity::Keys::with_len(self.len())
     }
 }
 
