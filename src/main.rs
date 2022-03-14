@@ -9,6 +9,9 @@ mod instances;
 mod modules;
 mod traits;
 
+#[cfg(test)]
+mod tests;
+
 use instances::Instance;
 use traits::Compiler;
 

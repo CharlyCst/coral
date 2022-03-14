@@ -14,3 +14,8 @@ cranelift-entity = "0.80.0"
 
 # Libc
 libc = "0.2.117"
+
+[dev-dependencies]
+# Used for testing
+wat = "1.0"
+
