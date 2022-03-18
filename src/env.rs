@@ -11,7 +11,11 @@ use cranelift_wasm::{DefinedFuncIndex, FuncIndex, TargetEnvironment, TypeIndex, 
 use crate::collections::{EntityRef, PrimaryMap, SecondaryMap};
 use crate::traits::ImportIndex;
 
+/// Size of a wasm page, defined by the standard.
 const WASM_PAGE_SIZE: u64 = 0x1000;
+/// Width of a VMContext entry. For now the width is independent of the architecture, and thorefore
+/// each entry span 8 bytes even for 32 bits architectures.
+const VMCTX_ENTRY_WIDTH: i32 = 0x8;
 
 /// Compute a `ir::ExternalName` for a given wasm function index.
 fn get_func_name(func_index: FuncIndex) -> ir::ExternalName {
@@ -98,11 +102,11 @@ impl ModuleInfo {
     }
 
     fn get_vmctx_func_offset(&self, func: &ImportedFunc) -> i32 {
-        self.heaps.len() as i32 + func.vmctx_idx
+        (self.heaps.len() as i32 + func.vmctx_idx) * VMCTX_ENTRY_WIDTH
     }
 
     fn get_vmctx_imported_vmctx_offset(&self, module: ImportIndex) -> i32 {
-        (self.heaps.len() + self.nb_imported_funcs + module.index()) as i32
+        (self.heaps.len() + self.nb_imported_funcs + module.index()) as i32 * VMCTX_ENTRY_WIDTH
     }
 }
 
@@ -431,12 +435,14 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
             let vmctx = self.vmctx(pos.func);
             let func_offset = self.info.get_vmctx_func_offset(func);
             let vmctx_offset = self.info.get_vmctx_imported_vmctx_offset(func.module);
-            let func_addr = pos.func.create_global_value(ir::GlobalValueData::Load {
-                base: vmctx,
-                offset: func_offset.into(),
-                global_type: self.pointer_type(),
-                readonly: false, // Because we might want to support hot swapping in the future
-            });
+            // NOTE: we could use the following address for a relative call, which would remove the
+            // need for inter-module relocations and therefore allow code sharing.
+            // let func_addr = pos.func.create_global_value(ir::GlobalValueData::Load {
+            //     base: vmctx,
+            //     offset: func_offset.into(),
+            //     global_type: self.pointer_type(),
+            //     readonly: false, // Because we might want to support hot swapping in the future
+            // });
             let callee_vmctx = pos.func.create_global_value(ir::GlobalValueData::Load {
                 base: vmctx,
                 offset: vmctx_offset.into(),
@@ -449,7 +455,7 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
             let mut real_call_args = Vec::with_capacity(call_args.len() + 1);
             real_call_args.extend(call_args);
             real_call_args.push(callee_vmctx);
-            Ok(pos.ins().call(callee, &real_call_args))
+            Ok(pos.ins().call(callee, &real_call_args)) // TODO: use a relative call
         } else {
             // Direct call
             //

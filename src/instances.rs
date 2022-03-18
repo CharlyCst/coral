@@ -75,7 +75,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
             .map(|x| Some(x))
             .collect::<Vec<Option<(&str, Instance<Alloc>)>>>();
         let imports = module.imports().try_map(|module| {
-            // Pick the firts matching module
+            // Pick the first matching module
             for item in import_from.iter_mut() {
                 if let Some((item_name, instance)) = item {
                     if item_name == module {
@@ -221,7 +221,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
             let addr = match name {
                 ItemRef::Func(idx) => self.get_func_addr(*idx),
                 ItemRef::Heap(idx) => self.heaps[*idx].memory.as_ptr(),
-                ItemRef::Import(idx) => self.imports[*idx].vmctx.as_ptr() as *const u8,
+                ItemRef::Import(idx) => self.imports[*idx].get_vmctx().as_ptr() as *const u8,
             };
             self.vmctx[idx] = addr;
         }
