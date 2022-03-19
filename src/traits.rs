@@ -59,6 +59,10 @@ pub struct HeapIndex(u32);
 entity_impl!(HeapIndex);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct GlobIndex(u32);
+entity_impl!(GlobIndex);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct ImportIndex(u32);
 entity_impl!(ImportIndex);
 
@@ -66,6 +70,7 @@ entity_impl!(ImportIndex);
 pub enum ItemRef {
     Func(FuncIndex),
     Heap(HeapIndex),
+    Glob(GlobIndex),
     Import(ImportIndex),
 }
 
@@ -73,6 +78,13 @@ impl ItemRef {
     pub fn as_func(self) -> Option<FuncIndex> {
         match self {
             ItemRef::Func(idx) => Some(idx),
+            _ => None,
+        }
+    }
+
+    pub fn as_glob(self) -> Option<GlobIndex> {
+        match self {
+            ItemRef::Glob(idx) => Some(idx),
             _ => None,
         }
     }
@@ -96,6 +108,21 @@ impl FuncInfo {
 pub struct HeapInfo {
     pub min_size: u32,
     pub kind: HeapKind,
+}
+
+/// Possible initial values for a global variable.
+#[derive(Clone, Copy)]
+pub enum GlobInit {
+    I32(i32),
+    I64(i64),
+    F32(u32),
+    F64(u64),
+}
+
+pub enum GlobInfo {
+    // TODO: add type
+    Owned { init: GlobInit },
+    Imported { module: ImportIndex, name: String },
 }
 
 pub struct Reloc {
@@ -124,6 +151,7 @@ pub trait Module {
     fn code(&self) -> &[u8];
     fn heaps(&self) -> &FrozenMap<HeapIndex, HeapInfo>;
     fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo>;
+    fn globs(&self) -> &FrozenMap<GlobIndex, GlobInfo>;
     fn imports(&self) -> &FrozenMap<ImportIndex, String>;
     fn relocs(&self) -> &[Reloc];
     fn public_items(&self) -> &HashMap<String, ItemRef>;

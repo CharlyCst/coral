@@ -6,7 +6,9 @@ use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_wasm as wasm;
 
-use cranelift_wasm::{DefinedFuncIndex, FuncIndex, TargetEnvironment, TypeIndex, WasmType};
+use cranelift_wasm::{
+    DefinedFuncIndex, FuncIndex, GlobalIndex, TargetEnvironment, TypeIndex, WasmType,
+};
 
 use crate::collections::{EntityRef, PrimaryMap, SecondaryMap};
 use crate::traits::ImportIndex;
@@ -65,6 +67,8 @@ pub struct ModuleInfo {
     pub func_bodies: PrimaryMap<DefinedFuncIndex, (ir::Function, FuncIndex)>,
     /// The registered memories
     pub heaps: Vec<wasm::Memory>,
+    /// The list of globals
+    pub globs: PrimaryMap<GlobalIndex, Exportable<wasm::Global>>,
     /// The list of imported modules
     pub modules: PrimaryMap<ImportIndex, String>,
     /// The number of imported funcs. The defined functions goes after the imported ones.
@@ -108,6 +112,34 @@ impl ModuleInfo {
     fn get_vmctx_imported_vmctx_offset(&self, module: ImportIndex) -> i32 {
         (self.heaps.len() + self.nb_imported_funcs + module.index()) as i32 * VMCTX_ENTRY_WIDTH
     }
+
+    fn get_vmctx_global_offset(&self, global: GlobalIndex) -> i32 {
+        (self.heaps.len() + self.nb_imported_funcs + self.modules.len() + global.index()) as i32
+            * VMCTX_ENTRY_WIDTH
+    }
+
+    /// Translate a wasm type to it's IR representation
+    fn wasm_to_ir_type(&self, ty: WasmType) -> ir::Type {
+        match ty {
+            WasmType::I32 => ir::types::I32,
+            WasmType::I64 => ir::types::I64,
+            WasmType::F32 => ir::types::F32,
+            WasmType::F64 => ir::types::F64,
+            WasmType::V128 => ir::types::I8X16,
+            WasmType::FuncRef | WasmType::ExternRef | WasmType::ExnRef => match self.pointer_type()
+            {
+                ir::types::I32 => ir::types::R32,
+                ir::types::I64 => ir::types::R64,
+                _ => panic!("unsupported pointer type"),
+            },
+        }
+    }
+}
+
+impl TargetEnvironment for ModuleInfo {
+    fn target_config(&self) -> TargetFrontendConfig {
+        self.target_config
+    }
 }
 
 pub struct ModuleEnvironment {
@@ -123,6 +155,7 @@ impl ModuleEnvironment {
             imported_funcs: SecondaryMap::new(),
             func_bodies: PrimaryMap::new(),
             heaps: Vec::new(),
+            globs: PrimaryMap::new(),
             modules: PrimaryMap::new(),
             nb_imported_funcs: 0,
             target_config,
@@ -144,21 +177,7 @@ impl TargetEnvironment for ModuleEnvironment {
 impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
     fn declare_type_func(&mut self, wasm_func_type: wasm::WasmFuncType) -> wasm::WasmResult<()> {
         // A small type conversion function
-        let mut wasm_to_ir = |ty: &WasmType| {
-            let reference_type = match self.pointer_type() {
-                ir::types::I32 => ir::types::R32,
-                ir::types::I64 => ir::types::R64,
-                _ => panic!("unsupported pointer type"),
-            };
-            ir::AbiParam::new(match ty {
-                WasmType::I32 => ir::types::I32,
-                WasmType::I64 => ir::types::I64,
-                WasmType::F32 => ir::types::F32,
-                WasmType::F64 => ir::types::F64,
-                WasmType::V128 => ir::types::I8X16,
-                WasmType::FuncRef | WasmType::ExternRef | WasmType::ExnRef => reference_type,
-            })
-        };
+        let mut wasm_to_ir = |ty: &WasmType| ir::AbiParam::new(self.info.wasm_to_ir_type(*ty));
         let mut sig = ir::Signature::new(CallConv::SystemV);
         sig.params
             .extend(wasm_func_type.params().iter().map(&mut wasm_to_ir));
@@ -233,7 +252,8 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
     }
 
     fn declare_global(&mut self, global: wasm::Global) -> wasm::WasmResult<()> {
-        todo!()
+        self.info.globs.push(Exportable::new(global));
+        Ok(())
     }
 
     fn declare_func_export(
@@ -360,7 +380,16 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         func: &mut ir::Function,
         index: wasm::GlobalIndex,
     ) -> wasm::WasmResult<wasm::GlobalVariable> {
-        todo!()
+        // Globals are stored in the VMContext
+        let vmctx = self.vmctx(func);
+        let offset = self.info.get_vmctx_global_offset(index).into();
+        let global = self.info.globs[index].entity;
+        let ty = self.info.wasm_to_ir_type(global.wasm_ty);
+        Ok(wasm::GlobalVariable::Memory {
+            gv: vmctx,
+            offset,
+            ty,
+        })
     }
 
     fn make_heap(
@@ -437,6 +466,7 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
             let vmctx_offset = self.info.get_vmctx_imported_vmctx_offset(func.module);
             // NOTE: we could use the following address for a relative call, which would remove the
             // need for inter-module relocations and therefore allow code sharing.
+            //
             // let func_addr = pos.func.create_global_value(ir::GlobalValueData::Load {
             //     base: vmctx,
             //     offset: func_offset.into(),

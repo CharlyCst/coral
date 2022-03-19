@@ -1,5 +1,7 @@
 use crate::collections::{FrozenMap, HashMap};
-use crate::traits::{FuncIndex, FuncInfo, HeapIndex, HeapInfo, ImportIndex, Reloc};
+use crate::traits::{
+    FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo, ImportIndex, Reloc,
+};
 use crate::traits::{ItemRef, Module};
 
 // ————————————————————————————————— Module ————————————————————————————————— //
@@ -8,6 +10,7 @@ pub struct ModuleInfo {
     exported_items: HashMap<String, ItemRef>,
     funcs: FrozenMap<FuncIndex, FuncInfo>,
     heaps: FrozenMap<HeapIndex, HeapInfo>,
+    globs: FrozenMap<GlobIndex, GlobInfo>,
     modules: FrozenMap<ImportIndex, String>,
 }
 
@@ -15,12 +18,14 @@ impl ModuleInfo {
     pub fn new(
         funcs: FrozenMap<FuncIndex, FuncInfo>,
         heaps: FrozenMap<HeapIndex, HeapInfo>,
+        globals: FrozenMap<GlobIndex, GlobInfo>,
         modules: FrozenMap<ImportIndex, String>,
     ) -> Self {
         Self {
             exported_items: HashMap::new(),
             funcs,
             heaps,
+            globs: globals,
             modules,
         }
     }
@@ -42,12 +47,20 @@ impl ModuleInfo {
                 .insert((*exported_name).to_owned(), ItemRef::Func(func_idx));
         }
     }
+
+    pub fn export_glob(&mut self, glob_idx: GlobIndex, exported_names: &[String]) {
+        for exported_name in exported_names {
+            self.exported_items
+                .insert((*exported_name).to_owned(), ItemRef::Glob(glob_idx));
+        }
+    }
 }
 
 pub struct SimpleModule {
     exported_names: HashMap<String, ItemRef>,
     funcs: FrozenMap<FuncIndex, FuncInfo>,
     heaps: FrozenMap<HeapIndex, HeapInfo>,
+    globs: FrozenMap<GlobIndex, GlobInfo>,
     modules: FrozenMap<ImportIndex, String>,
     code: Vec<u8>,
     relocs: Vec<Reloc>,
@@ -59,6 +72,7 @@ impl SimpleModule {
         // Compute the VMContext layout
         let heaps = info.heaps;
         let funcs = info.funcs;
+        let globs = info.globs;
         let modules = info.modules;
         let nb_imported_funcs = funcs.values().filter(|func| func.is_imported()).count();
         let mut vmctx_layout = Vec::with_capacity(heaps.len() + nb_imported_funcs + modules.len());
@@ -74,11 +88,15 @@ impl SimpleModule {
         for import_idx in modules.keys() {
             vmctx_layout.push(ItemRef::Import(import_idx));
         }
+        for glob_idx in globs.keys() {
+            vmctx_layout.push(ItemRef::Glob(glob_idx));
+        }
 
         Self {
             exported_names: info.exported_items,
             funcs,
             heaps,
+            globs,
             modules,
             code,
             relocs,
@@ -100,6 +118,10 @@ impl Module for SimpleModule {
         &self.funcs
     }
 
+    fn globs(&self) -> &FrozenMap<GlobIndex, GlobInfo> {
+        &self.globs
+    }
+
     fn imports(&self) -> &FrozenMap<ImportIndex, String> {
         &self.modules
     }
@@ -108,11 +130,11 @@ impl Module for SimpleModule {
         &self.relocs
     }
 
-    fn vmctx_items(&self) -> &[ItemRef] {
-        &self.vmctx_layout
-    }
-
     fn public_items(&self) -> &HashMap<String, ItemRef> {
         &self.exported_names
+    }
+
+    fn vmctx_items(&self) -> &[ItemRef] {
+        &self.vmctx_layout
     }
 }

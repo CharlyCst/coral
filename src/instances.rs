@@ -1,8 +1,10 @@
 #![allow(unused)]
 
 use crate::collections::{FrozenMap, HashMap, PrimaryMap};
-use crate::traits::{Allocator, Module, ModuleError, ModuleResult};
-use crate::traits::{FuncIndex, FuncInfo, HeapIndex, HeapKind, ImportIndex, ItemRef, RelocKind};
+use crate::traits::{Allocator, GlobIndex, Module, ModuleError, ModuleResult};
+use crate::traits::{
+    FuncIndex, FuncInfo, GlobInit, HeapIndex, HeapKind, ImportIndex, ItemRef, RelocKind,
+};
 
 type VMContext = Vec<*const u8>;
 
@@ -36,6 +38,11 @@ enum Func {
     Imported { from: ImportIndex, index: FuncIndex },
 }
 
+enum Glob {
+    Owned { init: GlobInit },
+    Imported { from: ImportIndex, index: GlobIndex },
+}
+
 pub struct Instance<Alloc: Allocator> {
     /// A map of all exported symbols.
     items: HashMap<String, ItemRef>,
@@ -53,6 +60,9 @@ pub struct Instance<Alloc: Allocator> {
 
     /// The functions of the instance.
     funcs: FrozenMap<FuncIndex, Func>,
+
+    /// The global variables of the instance.
+    globs: FrozenMap<GlobIndex, Glob>,
 
     /// The imported instances.
     imports: FrozenMap<ImportIndex, Instance<Alloc>>,
@@ -109,6 +119,28 @@ impl<Alloc: Allocator> Instance<Alloc> {
             }
         })?;
 
+        let globs = module.globs().try_map(|glob_info| match glob_info {
+            crate::traits::GlobInfo::Owned { init } => Ok(Glob::Owned { init: *init }),
+            crate::traits::GlobInfo::Imported { module, name } => {
+                // Look for the corresponding module
+                let instance = &imports[*module];
+                let glob_ref = instance
+                    .items
+                    .get(name)
+                    .ok_or(ModuleError::FailedToInstantiate)?
+                    .as_glob()
+                    .ok_or(ModuleError::FailedToInstantiate)?;
+
+                // TODO: typecheck glob here
+                let _blog = &instance.globs[glob_ref];
+
+                Ok(Glob::Imported {
+                    from: *module,
+                    index: glob_ref,
+                })
+            }
+        })?;
+
         let items = module.public_items().to_owned();
         let vmctx_items = module.vmctx_items().to_owned();
 
@@ -129,6 +161,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
             imports,
             items,
             heaps,
+            globs,
             funcs,
             code,
         };
@@ -212,6 +245,26 @@ impl<Alloc: Allocator> Instance<Alloc> {
         }
     }
 
+    /// Return the initial value of a global.
+    /// TODO: the current structure of the VMContext is not rich enough to express global
+    /// variables, there are different types that we might wants to return, including types bigger
+    /// than 8 bytes. Plus pointers are too small on 32 bits architectures...
+    fn get_glob_init_value(&self, glob: GlobIndex) -> *const u8 {
+        match &self.globs[glob] {
+            Glob::Owned { init } => match init {
+                // TODO: how to perform the conversion? We need a better VMContext...
+                GlobInit::I32(x) => (*x as i64) as *const u8,
+                GlobInit::I64(x) => *x as *const u8,
+                GlobInit::F32(x) => unsafe { core::mem::transmute(*x as u64) },
+                GlobInit::F64(x) => unsafe { core::mem::transmute(*x) },
+            },
+            Glob::Imported { from, index } => {
+                let instance = &self.imports[*from];
+                instance.get_glob_init_value(*index)
+            }
+        }
+    }
+
     // Update the VMContext: a structure containing pointers to the VM's items that can be queried
     // during code execution.
     fn update_vmctx(&mut self) {
@@ -221,6 +274,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
             let addr = match name {
                 ItemRef::Func(idx) => self.get_func_addr(*idx),
                 ItemRef::Heap(idx) => self.heaps[*idx].memory.as_ptr(),
+                ItemRef::Glob(idx) => self.get_glob_init_value(*idx),
                 ItemRef::Import(idx) => self.imports[*idx].get_vmctx().as_ptr() as *const u8,
             };
             self.vmctx[idx] = addr;
@@ -238,6 +292,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
         match item {
             ItemRef::Func(idx) => Item::Func(&self.funcs[idx]),
             ItemRef::Heap(idx) => Item::Heap(&self.heaps[idx]),
+            ItemRef::Glob(idx) => todo!(),
             ItemRef::Import(idx) => todo!(),
         }
     }

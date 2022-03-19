@@ -2,14 +2,14 @@ use cranelift_codegen::binemit::{Addend, CodeOffset, Reloc as RelocKind, RelocSi
 use cranelift_codegen::ir;
 use cranelift_codegen::isa;
 use cranelift_codegen::settings;
-use cranelift_wasm::{translate_module, ModuleTranslationState};
+use cranelift_wasm::{translate_module, GlobalInit, ModuleTranslationState};
 
 use crate::collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
 use crate::env;
 use crate::modules::{ModuleInfo, SimpleModule};
-use crate::traits::ItemRef;
-use crate::traits::{Compiler, CompilerError, CompilerResult};
+use crate::traits::{Compiler, CompilerError, CompilerResult, GlobInit};
 use crate::traits::{FuncIndex, FuncInfo, Reloc};
+use crate::traits::{GlobInfo, ItemRef};
 use crate::traits::{HeapInfo, HeapKind};
 
 // ———————————————————————————————— Compiler ———————————————————————————————— //
@@ -54,6 +54,7 @@ impl Compiler for X86_64Compiler {
     fn compile(self) -> CompilerResult<SimpleModule> {
         let module_info = self.module.info;
         let mut imported_funcs = module_info.imported_funcs;
+        // TODO: handle imported globals
         let modules = FrozenMap::freeze(module_info.modules);
 
         // Build the functions info
@@ -97,9 +98,25 @@ impl Compiler for X86_64Compiler {
         }
         let heaps = FrozenMap::freeze(heaps);
 
-        let mut mod_info = ModuleInfo::new(funcs, heaps, modules);
+        // Build the globals info
+        let mut globs = PrimaryMap::new();
+        let mut globs_names = SecondaryMap::new();
+        for (_glob_idx, glob_names) in module_info.globs {
+            // We move out with `take` to avoid cloning the name
+            // TODO: handle imported globals
+            let init = convert_glob_init(glob_names.entity.initializer);
+            let glob = GlobInfo::Owned { init };
+            let glob_idx = globs.push(glob);
+            globs_names[glob_idx] = glob_names.export_names;
+        }
+        let globs = FrozenMap::freeze(globs);
+
+        let mut mod_info = ModuleInfo::new(funcs, heaps, globs, modules);
         for (func_idx, names) in funcs_names.iter() {
             mod_info.export_func(func_idx, names);
+        }
+        for (glob_idx, names) in globs_names.iter() {
+            mod_info.export_glob(glob_idx, names);
         }
 
         let mut code = Vec::new();
@@ -135,6 +152,21 @@ impl Compiler for X86_64Compiler {
         }
 
         Ok(SimpleModule::new(mod_info, code, relocs.relocs))
+    }
+}
+
+fn convert_glob_init(init: GlobalInit) -> GlobInit {
+    match init {
+        GlobalInit::I32Const(x) => GlobInit::I32(x),
+        GlobalInit::I64Const(x) => GlobInit::I64(x),
+        // NOTE: Can we get rid of the unsafe for the conversion?
+        GlobalInit::F32Const(x) => unsafe { GlobInit::F32(core::mem::transmute(x)) },
+        GlobalInit::F64Const(x) => unsafe { GlobInit::F64(core::mem::transmute(x)) },
+        GlobalInit::V128Const(_) => todo!(),
+        GlobalInit::GetGlobal(_) => todo!(),
+        GlobalInit::RefNullConst => todo!(),
+        GlobalInit::RefFunc(_) => todo!(),
+        GlobalInit::Import => todo!(),
     }
 }
 

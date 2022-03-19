@@ -65,15 +65,15 @@ fn call() {
         r#"
         (module
             (func $add_and_square (param $arg1 i32) (param $arg2 i32) (result i32)
-                get_local $arg1
-                get_local $arg2
+                local.get $arg1
+                local.get $arg2
                 i32.add
 
                 call $square
             )
             (func $square (param $arg i32) (result i32)
-                get_local $arg
-                get_local $arg
+                local.get $arg
+                local.get $arg
                 i32.mul
             )
             (export "main" (func $add_and_square))
@@ -152,6 +152,41 @@ fn context_switch() {
     let answer = execute_0_deps(module, vec![("mod", imported_module)]);
     assert_eq!(answer, 42);
 }
+
+#[test]
+fn global_read() {
+    let module = compile(
+        r#"
+        (module
+            (func $the_answer (result i32)
+                global.get $glob
+            )
+            (global $glob i32 (i32.const 42))
+            (export "main" (func $the_answer))
+        )
+    "#,
+    );
+    assert_eq!(execute_0(module), 42);
+}
+
+#[test]
+fn global_write() {
+    let module = compile(
+        r#"
+        (module
+            (func $the_answer (result i32)
+                i32.const 42
+                global.set $glob
+                global.get $glob
+            )
+            (global $glob (mut i32) (i32.const 0))
+            (export "main" (func $the_answer))
+        )
+    "#,
+    );
+    assert_eq!(execute_0(module), 42);
+}
+
 
 // ———————————————————————————— Helper Functions ———————————————————————————— //
 
