@@ -132,7 +132,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
                     .ok_or(ModuleError::FailedToInstantiate)?;
 
                 // TODO: typecheck glob here
-                let _blog = &instance.globs[glob_ref];
+                let _glob = &instance.globs[glob_ref];
 
                 Ok(Glob::Imported {
                     from: *module,
@@ -258,6 +258,31 @@ impl<Alloc: Allocator> Instance<Alloc> {
                 GlobInit::F32(x) => unsafe { core::mem::transmute(*x as u64) },
                 GlobInit::F64(x) => unsafe { core::mem::transmute(*x) },
             },
+            Glob::Imported { from, index } => {
+                let instance = &self.imports[*from];
+                instance.get_glob_ptr(*index)
+            }
+        }
+    }
+
+    fn get_glob_ptr(&self, glob: GlobIndex) -> *const u8 {
+        match &self.globs[glob] {
+            Glob::Owned { .. } => {
+                let vmctx_ptr = self.vmctx.as_ptr();
+                // TODO: we might want to get rid of the linear scan
+                let (idx, _) = self
+                    .vmctx_items
+                    .iter()
+                    .enumerate()
+                    .find(|(_, item)| match item {
+                        ItemRef::Glob(idx) => *idx == glob,
+                        _ => false,
+                    })
+                    .unwrap();
+                // TODO: This is really crappy, we should have a better representation of VMContext
+                // to avoid that...
+                vmctx_ptr.wrapping_add(idx) as *const u8
+            }
             Glob::Imported { from, index } => {
                 let instance = &self.imports[*from];
                 instance.get_glob_init_value(*index)

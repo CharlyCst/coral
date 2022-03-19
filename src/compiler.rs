@@ -54,7 +54,7 @@ impl Compiler for X86_64Compiler {
     fn compile(self) -> CompilerResult<SimpleModule> {
         let module_info = self.module.info;
         let mut imported_funcs = module_info.imported_funcs;
-        // TODO: handle imported globals
+        let mut imported_globs = module_info.imported_globs;
         let modules = FrozenMap::freeze(module_info.modules);
 
         // Build the functions info
@@ -101,11 +101,18 @@ impl Compiler for X86_64Compiler {
         // Build the globals info
         let mut globs = PrimaryMap::new();
         let mut globs_names = SecondaryMap::new();
-        for (_glob_idx, glob_names) in module_info.globs {
+        for (glob_idx, glob_names) in module_info.globs {
             // We move out with `take` to avoid cloning the name
             // TODO: handle imported globals
-            let init = convert_glob_init(glob_names.entity.initializer);
-            let glob = GlobInfo::Owned { init };
+            let glob = if let Some(import_info) = imported_globs[glob_idx].take() {
+                GlobInfo::Imported {
+                    module: import_info.module,
+                    name: import_info.name,
+                }
+            } else {
+                let init = convert_glob_init(glob_names.entity.initializer);
+                GlobInfo::Owned { init }
+            };
             let glob_idx = globs.push(glob);
             globs_names[glob_idx] = glob_names.export_names;
         }
@@ -166,7 +173,8 @@ fn convert_glob_init(init: GlobalInit) -> GlobInit {
         GlobalInit::GetGlobal(_) => todo!(),
         GlobalInit::RefNullConst => todo!(),
         GlobalInit::RefFunc(_) => todo!(),
-        GlobalInit::Import => todo!(),
+        // Should never happen, we handle imports in a separate case
+        GlobalInit::Import => panic!(),
     }
 }
 

@@ -56,6 +56,16 @@ pub struct ImportedFunc {
     pub vmctx_idx: i32,
 }
 
+#[derive(Clone)]
+pub struct ImportedGlob {
+    /// The index of the module.
+    pub module: ImportIndex,
+    /// The name of the imported global inside its module.
+    pub name: String,
+    /// Index of the pointer to the module's VMContext inside the current VMContext.
+    pub vmctx_idx: i32,
+}
+
 pub struct ModuleInfo {
     /// TypeID -> Type
     pub func_types: PrimaryMap<TypeIndex, ir::Signature>,
@@ -69,6 +79,8 @@ pub struct ModuleInfo {
     pub heaps: Vec<wasm::Memory>,
     /// The list of globals
     pub globs: PrimaryMap<GlobalIndex, Exportable<wasm::Global>>,
+    /// A mapping GlobalID -> imported_glob_info
+    pub imported_globs: SecondaryMap<GlobalIndex, Option<ImportedGlob>>,
     /// The list of imported modules
     pub modules: PrimaryMap<ImportIndex, String>,
     /// The number of imported funcs. The defined functions goes after the imported ones.
@@ -157,6 +169,7 @@ impl ModuleEnvironment {
             heaps: Vec::new(),
             globs: PrimaryMap::new(),
             modules: PrimaryMap::new(),
+            imported_globs: SecondaryMap::new(),
             nb_imported_funcs: 0,
             target_config,
         };
@@ -233,7 +246,15 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         module: &'data str,
         field: Option<&'data str>,
     ) -> wasm::WasmResult<()> {
-        todo!()
+        let index = self.info.globs.push(Exportable::new(global));
+        let module_idx = self.info.get_module_idx(module);
+        let vmctx_idx = self.info.get_vmctx_imported_vmctx_offset(module_idx);
+        self.info.imported_globs[index] = Some(ImportedGlob {
+            module: module_idx,
+            name: field.unwrap().to_string(), // TODO: can field be None?
+            vmctx_idx,
+        });
+        Ok(())
     }
 
     fn declare_func_type(&mut self, ty_idx: wasm::TypeIndex) -> wasm::WasmResult<()> {
@@ -286,7 +307,8 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         global_index: wasm::GlobalIndex,
         name: &'data str,
     ) -> wasm::WasmResult<()> {
-        todo!()
+        self.info.globs[global_index].export_as(name.to_string());
+        Ok(())
     }
 
     fn declare_start_func(&mut self, index: wasm::FuncIndex) -> wasm::WasmResult<()> {
@@ -380,16 +402,33 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         func: &mut ir::Function,
         index: wasm::GlobalIndex,
     ) -> wasm::WasmResult<wasm::GlobalVariable> {
-        // Globals are stored in the VMContext
+        // There are two kinds of globals: locally defined and imported globals.
+        // - Locally defined globals are stored in the VMContext.
+        // - Imported globals are stored in a foreign VMContext but are pointed to by an entry
+        //   in the local VMContext.
         let vmctx = self.vmctx(func);
         let offset = self.info.get_vmctx_global_offset(index).into();
         let global = self.info.globs[index].entity;
         let ty = self.info.wasm_to_ir_type(global.wasm_ty);
-        Ok(wasm::GlobalVariable::Memory {
-            gv: vmctx,
-            offset,
-            ty,
-        })
+        if let Some(import_info) = &self.info.imported_globs[index] {
+            let global_ptr = func.create_global_value(ir::GlobalValueData::Load {
+                base: vmctx,
+                offset,
+                global_type: self.pointer_type(),
+                readonly: false, // We might want to support hot swapping in the future
+            });
+            Ok(wasm::GlobalVariable::Memory {
+                gv: global_ptr,
+                offset: 0.into(), // Directly pointed to
+                ty,
+            })
+        } else {
+            Ok(wasm::GlobalVariable::Memory {
+                gv: vmctx,
+                offset,
+                ty,
+            })
+        }
     }
 
     fn make_heap(

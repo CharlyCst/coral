@@ -187,6 +187,43 @@ fn global_write() {
     assert_eq!(execute_0(module), 42);
 }
 
+#[test]
+fn import_global() {
+    let module = compile(
+        r#"
+        (module
+            (type $t (func))
+            (import "answer" "set_answer"
+                (func $set_answer (type $t))
+            )
+            (import "answer" "the_answer"
+                (global $the_answer i32)
+            )
+            (func $main (result i32)
+                call $set_answer
+                global.get $the_answer
+            )
+            (export "main" (func $main))
+        )
+        "#,
+    );
+    let imported_module = compile(
+        r#"
+        (module
+            (func $set_answer
+                i32.const 42
+                global.set $answer
+            )
+            (global $answer (mut i32) (i32.const 0))
+            (export "the_answer" (global $answer))
+            (export "set_answer" (func $set_answer))
+        )
+    "#,
+    );
+    let answer = execute_0_deps(module, vec![("answer", imported_module)]);
+    assert_eq!(answer, 42);
+}
+
 
 // ———————————————————————————— Helper Functions ———————————————————————————— //
 
