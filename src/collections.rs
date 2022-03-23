@@ -115,6 +115,11 @@ where
         entity::Iter::new(self.elems.iter())
     }
 
+    /// Iterate over all keys and velues in the map.
+    pub fn iter_mut(&mut self) -> entity::IterMut<K, V> {
+        entity::IterMut::new(self.elems.iter_mut())
+    }
+
     /// Iterate over all the values.
     pub fn values(&self) -> core::slice::Iter<V> {
         self.elems.iter()

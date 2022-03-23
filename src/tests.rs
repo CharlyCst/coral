@@ -244,7 +244,7 @@ fn execute_0(module: impl Module) -> i32 {
         let fun = "main";
         let fun_ptr = instance.get_func_addr_from_name(fun).unwrap();
 
-        let vmctx = instance.get_vmctx().as_ptr();
+        let vmctx = instance.get_vmctx_ptr();
         let result: i32;
         asm!(
             "call {entry_point}",
@@ -266,7 +266,7 @@ fn execute_2(module: impl Module, arg1: i32, arg2: i32) -> i32 {
         let fun = "main";
         let fun_ptr = instance.get_func_addr_from_name(fun).unwrap();
 
-        let vmctx = instance.get_vmctx().as_ptr();
+        let vmctx = instance.get_vmctx_ptr();
         let result: i32;
         asm!(
             "call {entry_point}",
@@ -299,7 +299,7 @@ fn execute_0_deps(module: impl Module, dependencies: Vec<(&str, impl Module)>) -
         let fun = "main";
         let fun_ptr = instance.get_func_addr_from_name(fun).unwrap();
 
-        let vmctx = instance.get_vmctx().as_ptr();
+        let vmctx = instance.get_vmctx_ptr();
         let result: i32;
         asm!(
             "call {entry_point}",

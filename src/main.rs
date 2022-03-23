@@ -1,6 +1,8 @@
 #![feature(asm, allocator_api)]
 use std::fs;
 
+extern crate alloc as core_alloc;
+
 mod alloc;
 mod collections;
 mod compiler;
@@ -8,6 +10,7 @@ mod env;
 mod instances;
 mod modules;
 mod traits;
+mod vmctx;
 
 #[cfg(test)]
 mod tests;
@@ -63,7 +66,7 @@ fn main() {
 
         let a: u32 = 2;
         let b: u32 = 3;
-        let vmctx = instance.get_vmctx().as_ptr();
+        let vmctx = instance.get_vmctx_ptr();
         let c: u32;
         asm!(
             "call {entry_point}",

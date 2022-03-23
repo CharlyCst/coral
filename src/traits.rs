@@ -67,6 +67,7 @@ pub struct ImportIndex(u32);
 entity_impl!(ImportIndex);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
 pub enum ItemRef {
     Func(FuncIndex),
     Heap(HeapIndex),
@@ -125,11 +126,19 @@ pub enum GlobInfo {
     Imported { module: ImportIndex, name: String },
 }
 
+pub trait VMContextLayout {
+    fn heaps(&self) -> &[HeapIndex];
+    fn funcs(&self) -> &[FuncIndex];
+    fn globs(&self) -> &[GlobIndex];
+    fn imports(&self) -> &[ImportIndex];
+}
+
 pub struct Reloc {
     /// Offset of the relocation, relative to the module's code address.
     pub offset: u32,
 
     /// The kind of relocation.
+    //  TODO: abstract over cranelift_codegen to avoid pulling in the dependency.
     pub kind: RelocKind,
 
     /// The symbol, whose address corresponds to the new relocation value.
@@ -148,6 +157,8 @@ pub enum ModuleError {
 pub type ModuleResult<T> = Result<T, ModuleError>;
 
 pub trait Module {
+    type VMContext: VMContextLayout + Clone + 'static;
+
     fn code(&self) -> &[u8];
     fn heaps(&self) -> &FrozenMap<HeapIndex, HeapInfo>;
     fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo>;
@@ -155,5 +166,5 @@ pub trait Module {
     fn imports(&self) -> &FrozenMap<ImportIndex, String>;
     fn relocs(&self) -> &[Reloc];
     fn public_items(&self) -> &HashMap<String, ItemRef>;
-    fn vmctx_items(&self) -> &[ItemRef];
+    fn vmctx_layout(&self) -> &Self::VMContext;
 }

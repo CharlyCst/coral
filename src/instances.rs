@@ -1,12 +1,11 @@
 #![allow(unused)]
 
-use crate::collections::{FrozenMap, HashMap, PrimaryMap};
-use crate::traits::{Allocator, GlobIndex, Module, ModuleError, ModuleResult};
+use crate::collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
+use crate::traits::{Allocator, GlobIndex, Module, ModuleError, ModuleResult, VMContextLayout};
 use crate::traits::{
     FuncIndex, FuncInfo, GlobInit, HeapIndex, HeapKind, ImportIndex, ItemRef, RelocKind,
 };
-
-type VMContext = Vec<*const u8>;
+use crate::vmctx::VMContext;
 
 enum Item<'a, Alloc: Allocator> {
     Func(&'a Func),
@@ -47,9 +46,6 @@ pub struct Instance<Alloc: Allocator> {
     /// A map of all exported symbols.
     items: HashMap<String, ItemRef>,
 
-    /// The list of items in the VMContext. Used to dynamically update the VMContext.
-    vmctx_items: Vec<ItemRef>,
-
     /// The VM Context, contains pointers to various structures, such as heaps and tables.
     ///
     /// For now, only 8 bytes pointers are handled.
@@ -72,8 +68,8 @@ pub struct Instance<Alloc: Allocator> {
 }
 
 impl<Alloc: Allocator> Instance<Alloc> {
-    pub fn instantiate(
-        module: &impl Module,
+    pub fn instantiate<Mod: Module>(
+        module: &Mod,
         import_from: Vec<(&str, Instance<Alloc>)>,
         alloc: &Alloc,
     ) -> ModuleResult<Self>
@@ -142,7 +138,6 @@ impl<Alloc: Allocator> Instance<Alloc> {
         })?;
 
         let items = module.public_items().to_owned();
-        let vmctx_items = module.vmctx_items().to_owned();
 
         // Allocate heaps
         let heaps = module
@@ -156,8 +151,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
 
         // Create instance
         let mut instance = Self {
-            vmctx: vec![core::ptr::NonNull::dangling().as_ptr(); vmctx_items.len()],
-            vmctx_items,
+            vmctx: VMContext::empty(module.vmctx_layout()),
             imports,
             items,
             heaps,
@@ -171,7 +165,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
         alloc.set_executable(&instance.code);
 
         // Set the VMContext to its expected initial values
-        instance.update_vmctx();
+        instance.init_vmctx();
 
         Ok(instance)
     }
@@ -193,8 +187,8 @@ impl<Alloc: Allocator> Instance<Alloc> {
         }
     }
 
-    pub fn get_vmctx(&self) -> &VMContext {
-        &self.vmctx
+    pub fn get_vmctx_ptr(&self) -> *const u8 {
+        self.vmctx.as_ptr()
     }
 
     fn relocate(&mut self, module: &impl Module) -> ModuleResult<()> {
@@ -267,42 +261,35 @@ impl<Alloc: Allocator> Instance<Alloc> {
 
     fn get_glob_ptr(&self, glob: GlobIndex) -> *const u8 {
         match &self.globs[glob] {
-            Glob::Owned { .. } => {
-                let vmctx_ptr = self.vmctx.as_ptr();
-                // TODO: we might want to get rid of the linear scan
-                let (idx, _) = self
-                    .vmctx_items
-                    .iter()
-                    .enumerate()
-                    .find(|(_, item)| match item {
-                        ItemRef::Glob(idx) => *idx == glob,
-                        _ => false,
-                    })
-                    .unwrap();
-                // TODO: This is really crappy, we should have a better representation of VMContext
-                // to avoid that...
-                vmctx_ptr.wrapping_add(idx) as *const u8
-            }
+            Glob::Owned { .. } => self.vmctx.get_global_ptr(glob),
             Glob::Imported { from, index } => {
                 let instance = &self.imports[*from];
-                instance.get_glob_init_value(*index)
+                instance.get_glob_ptr(*index)
             }
         }
     }
 
-    // Update the VMContext: a structure containing pointers to the VM's items that can be queried
-    // during code execution.
-    fn update_vmctx(&mut self) {
-        // WARNING: `vmctx` and `vmctx_items` must have the exact same size here!
-        assert_eq!(self.vmctx_items.len(), self.vmctx.len());
-        for (idx, name) in self.vmctx_items.iter().enumerate() {
-            let addr = match name {
-                ItemRef::Func(idx) => self.get_func_addr(*idx),
-                ItemRef::Heap(idx) => self.heaps[*idx].memory.as_ptr(),
-                ItemRef::Glob(idx) => self.get_glob_init_value(*idx),
-                ItemRef::Import(idx) => self.imports[*idx].get_vmctx().as_ptr() as *const u8,
-            };
-            self.vmctx[idx] = addr;
+    /// Initialize the VMContext struct.
+    /// This function **must** be called before runing any code within the instance, otherwise the
+    /// execution leads to undefined behavior.
+    fn init_vmctx(&mut self) {
+        for (idx, heap) in self.heaps.iter_mut() {
+            let ptr = heap.ptr();
+            self.vmctx.set_heap(ptr, idx);
+        }
+        for idx in self.funcs.keys() {
+            let ptr = self.get_func_addr(idx);
+            self.vmctx.set_func(ptr, idx);
+        }
+        for (idx, import) in self.imports.iter_mut() {
+            let ptr = import.vmctx.as_ptr();
+            self.vmctx.set_import(ptr, idx);
+        }
+        for (idx, glob) in self.globs.iter() {
+            match glob {
+                Glob::Owned { init } => self.vmctx.set_glob_value(*init, idx),
+                Glob::Imported { .. } => self.vmctx.set_glob_ptr(self.get_glob_ptr(idx), idx),
+            }
         }
     }
 
