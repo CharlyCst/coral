@@ -60,6 +60,66 @@ fn store_and_load() {
 }
 
 #[test]
+fn import_memory() {
+    let module = compile(
+        r#"
+        (module
+            (type $t (func))
+            (import "answer" "set_answer"
+                (func $set_answer (type $t))
+            )
+            (import "answer" "memory"
+                (memory $mem 1)
+            )
+            (func $main (result i32)
+                call $set_answer
+                i32.const 0
+                i32.load
+            )
+            (export "main" (func $main))
+        )
+        "#,
+    );
+    let imported_module = compile(
+        r#"
+        (module
+            (func $set_answer
+                i32.const 0
+                i32.const 42
+                i32.store
+            )
+            (memory $mem 1 1)
+            (export "memory" (memory $mem))
+            (export "set_answer" (func $set_answer))
+        )
+    "#,
+    );
+    let answer = execute_0_deps(module, vec![("answer", imported_module)]);
+    assert_eq!(answer, 42);
+}
+
+// // The Wasm proposal for multi memory is not yet standardized (phase 3 out of 5 at the time of
+// // writing).
+//
+// #[test]
+// fn multi_memory() {
+//     let module = compile(
+//         r#"
+//         (module
+//             (func $zero (result i32)
+//                 i32.const 0
+//                 i32.load
+//             )
+//             (memory $mem_a 1 1)
+//             (memory $mem_b 1 1)
+//             (export "main" (func $zero))
+//         )
+//     "#,
+//     );
+//     assert_eq!(execute_0(module), 0);
+// }
+
+#[test]
 fn call() {
     let module = compile(
         r#"
@@ -224,6 +284,29 @@ fn import_global() {
     assert_eq!(answer, 42);
 }
 
+#[test]
+/// The simplest possible program, compiled from Rust to Wasm.
+fn the_answer_rust() {
+    let module = compile(
+        r#"
+        (module
+            (type (;0;) (func (result i32)))
+            (func $answer (type 0) (result i32)
+                i32.const 42
+            )
+            (table (;0;) 1 1 funcref)
+            (memory (;0;) 16)
+            (global (;0;) (mut i32) (i32.const 1048576))
+            (global (;1;) i32 (i32.const 1048576))
+            (global (;2;) i32 (i32.const 1048576))
+            (export "memory" (memory 0))
+            (export "main" (func $answer))
+            (export "__data_end" (global 1))
+            (export "__heap_base" (global 2)))
+        "#,
+    );
+    assert_eq!(execute_0(module), 42);
+}
 
 // ———————————————————————————— Helper Functions ———————————————————————————— //
 

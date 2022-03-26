@@ -48,6 +48,13 @@ impl ModuleInfo {
         }
     }
 
+    pub fn export_heap(&mut self, heap_idx: HeapIndex, exported_names: &[String]) {
+        for exported_name in exported_names {
+            self.exported_items
+                .insert((*exported_name).to_owned(), ItemRef::Heap(heap_idx));
+        }
+    }
+
     pub fn export_glob(&mut self, glob_idx: GlobIndex, exported_names: &[String]) {
         for exported_name in exported_names {
             self.exported_items

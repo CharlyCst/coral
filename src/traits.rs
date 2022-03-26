@@ -83,6 +83,13 @@ impl ItemRef {
         }
     }
 
+    pub fn as_heap(self) -> Option<HeapIndex> {
+        match self {
+            ItemRef::Heap(idx) => Some(idx),
+            _ => None,
+        }
+    }
+
     pub fn as_glob(self) -> Option<GlobIndex> {
         match self {
             ItemRef::Glob(idx) => Some(idx),
@@ -106,9 +113,9 @@ impl FuncInfo {
     }
 }
 
-pub struct HeapInfo {
-    pub min_size: u32,
-    pub kind: HeapKind,
+pub enum HeapInfo {
+    Owned { min_size: u32, kind: HeapKind },
+    Imported { module: ImportIndex, name: String },
 }
 
 /// Possible initial values for a global variable.

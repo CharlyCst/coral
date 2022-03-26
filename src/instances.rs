@@ -3,7 +3,8 @@
 use crate::collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
 use crate::traits::{Allocator, GlobIndex, Module, ModuleError, ModuleResult, VMContextLayout};
 use crate::traits::{
-    FuncIndex, FuncInfo, GlobInit, HeapIndex, HeapKind, ImportIndex, ItemRef, RelocKind,
+    FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind, ImportIndex, ItemRef,
+    RelocKind,
 };
 use crate::vmctx::VMContext;
 
@@ -12,8 +13,14 @@ enum Item<'a, Alloc: Allocator> {
     Heap(&'a Heap<Alloc>),
 }
 
-struct Heap<Alloc: Allocator> {
-    memory: Box<[u8], Alloc::HeapAllocator>,
+enum Heap<Alloc: Allocator> {
+    Owned {
+        memory: Box<[u8], Alloc::HeapAllocator>,
+    },
+    Imported {
+        from: ImportIndex,
+        index: HeapIndex,
+    },
 }
 
 impl<Alloc: Allocator> Heap<Alloc> {
@@ -23,12 +30,7 @@ impl<Alloc: Allocator> Heap<Alloc> {
         for byte in memory.iter_mut() {
             *byte = 0;
         }
-        Self { memory }
-    }
-
-    /// Get the pointer to the heap data.
-    pub fn ptr(&mut self) -> *mut u8 {
-        self.memory.as_mut_ptr()
+        Self::Owned { memory }
     }
 }
 
@@ -116,8 +118,8 @@ impl<Alloc: Allocator> Instance<Alloc> {
         })?;
 
         let globs = module.globs().try_map(|glob_info| match glob_info {
-            crate::traits::GlobInfo::Owned { init } => Ok(Glob::Owned { init: *init }),
-            crate::traits::GlobInfo::Imported { module, name } => {
+            GlobInfo::Owned { init } => Ok(Glob::Owned { init: *init }),
+            GlobInfo::Imported { module, name } => {
                 // Look for the corresponding module
                 let instance = &imports[*module];
                 let glob_ref = instance
@@ -140,9 +142,24 @@ impl<Alloc: Allocator> Instance<Alloc> {
         let items = module.public_items().to_owned();
 
         // Allocate heaps
-        let heaps = module
-            .heaps()
-            .map(|heap_info| Heap::with_capacity(heap_info.min_size, heap_info.kind, alloc));
+        let heaps = module.heaps().try_map(|heap_info| match heap_info {
+            HeapInfo::Owned { min_size, kind } => Ok(Heap::with_capacity(*min_size, *kind, alloc)),
+            HeapInfo::Imported { module, name } => {
+                // Look for the corresponding module
+                let instance = &imports[*module];
+                let heap_ref = instance
+                    .items
+                    .get(name)
+                    .ok_or(ModuleError::FailedToInstantiate)?
+                    .as_heap()
+                    .ok_or(ModuleError::FailedToInstantiate)?;
+
+                Ok(Heap::Imported {
+                    from: *module,
+                    index: heap_ref,
+                })
+            }
+        })?;
 
         // Allocate code
         let mod_code = module.code();
@@ -194,7 +211,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
     fn relocate(&mut self, module: &impl Module) -> ModuleResult<()> {
         for reloc in module.relocs() {
             let base = match reloc.item {
-                ItemRef::Func(func) => self.get_func_addr(func) as i64,
+                ItemRef::Func(func) => self.get_func_ptr(func) as i64,
                 // Only functions are supported by relocations
                 _ => return Err(ModuleError::FailedToInstantiate),
             };
@@ -228,37 +245,31 @@ impl<Alloc: Allocator> Instance<Alloc> {
     }
 
     /// Return the address of a function.
-    /// Imported functions are resolved though recursive lookups.
-    fn get_func_addr(&self, func: FuncIndex) -> *const u8 {
+    /// Imported functions are resolved through recursive lookups.
+    fn get_func_ptr(&self, func: FuncIndex) -> *const u8 {
         match &self.funcs[func] {
             Func::Owned { offset } => self.code.as_ptr().wrapping_add(*offset as usize),
             Func::Imported { from, index } => {
                 let instance = &self.imports[*from];
-                instance.get_func_addr(*index)
+                instance.get_func_ptr(*index)
             }
         }
     }
 
-    /// Return the initial value of a global.
-    /// TODO: the current structure of the VMContext is not rich enough to express global
-    /// variables, there are different types that we might wants to return, including types bigger
-    /// than 8 bytes. Plus pointers are too small on 32 bits architectures...
-    fn get_glob_init_value(&self, glob: GlobIndex) -> *const u8 {
-        match &self.globs[glob] {
-            Glob::Owned { init } => match init {
-                // TODO: how to perform the conversion? We need a better VMContext...
-                GlobInit::I32(x) => (*x as i64) as *const u8,
-                GlobInit::I64(x) => *x as *const u8,
-                GlobInit::F32(x) => unsafe { core::mem::transmute(*x as u64) },
-                GlobInit::F64(x) => unsafe { core::mem::transmute(*x) },
-            },
-            Glob::Imported { from, index } => {
+    /// Return the address of a heap.
+    /// Imported heaps are resolved through recursive lookups.
+    fn get_heap_ptr(&self, heap: HeapIndex) -> *const u8 {
+        match &self.heaps[heap] {
+            Heap::Owned { memory } => memory.as_ptr(),
+            Heap::Imported { from, index } => {
                 let instance = &self.imports[*from];
-                instance.get_glob_ptr(*index)
+                instance.get_heap_ptr(*index)
             }
         }
     }
 
+    /// Return the address of a global.
+    /// Imported globals are resolved through recursive lookups.
     fn get_glob_ptr(&self, glob: GlobIndex) -> *const u8 {
         match &self.globs[glob] {
             Glob::Owned { .. } => self.vmctx.get_global_ptr(glob),
@@ -273,12 +284,12 @@ impl<Alloc: Allocator> Instance<Alloc> {
     /// This function **must** be called before runing any code within the instance, otherwise the
     /// execution leads to undefined behavior.
     fn init_vmctx(&mut self) {
-        for (idx, heap) in self.heaps.iter_mut() {
-            let ptr = heap.ptr();
+        for idx in self.heaps.keys() {
+            let ptr = self.get_heap_ptr(idx);
             self.vmctx.set_heap(ptr, idx);
         }
         for idx in self.funcs.keys() {
-            let ptr = self.get_func_addr(idx);
+            let ptr = self.get_func_ptr(idx);
             self.vmctx.set_func(ptr, idx);
         }
         for (idx, import) in self.imports.iter_mut() {

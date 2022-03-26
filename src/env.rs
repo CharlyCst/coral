@@ -7,7 +7,7 @@ use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_wasm as wasm;
 
 use cranelift_wasm::{
-    DefinedFuncIndex, FuncIndex, GlobalIndex, TargetEnvironment, TypeIndex, WasmType,
+    DefinedFuncIndex, FuncIndex, GlobalIndex, MemoryIndex, TargetEnvironment, TypeIndex, WasmType,
 };
 
 use crate::collections::{EntityRef, PrimaryMap, SecondaryMap};
@@ -57,6 +57,16 @@ pub struct ImportedFunc {
 }
 
 #[derive(Clone)]
+pub struct ImportedHeap {
+    /// The index of the module
+    pub module: ImportIndex,
+    /// The name of the imported heap inside its module.
+    pub name: String,
+    /// Index of the heap in the VMContext.
+    pub vmctx_idx: i32,
+}
+
+#[derive(Clone)]
 pub struct ImportedGlob {
     /// The index of the module.
     pub module: ImportIndex,
@@ -76,7 +86,9 @@ pub struct ModuleInfo {
     /// Function bodies
     pub func_bodies: PrimaryMap<DefinedFuncIndex, (ir::Function, FuncIndex)>,
     /// The registered memories
-    pub heaps: Vec<wasm::Memory>,
+    pub heaps: PrimaryMap<MemoryIndex, Exportable<wasm::Memory>>,
+    /// A mapping MemoryID -> imported_heap_info
+    pub imported_heaps: SecondaryMap<MemoryIndex, Option<ImportedHeap>>,
     /// The list of globals
     pub globs: PrimaryMap<GlobalIndex, Exportable<wasm::Global>>,
     /// A mapping GlobalID -> imported_glob_info
@@ -115,6 +127,10 @@ impl ModuleInfo {
         } else {
             self.modules.push(module.to_owned())
         }
+    }
+
+    fn get_vmctx_heap_offset(&self, heap: MemoryIndex) -> i32 {
+        heap.index() as i32 * VMCTX_ENTRY_WIDTH
     }
 
     fn get_vmctx_func_offset(&self, func: &ImportedFunc) -> i32 {
@@ -166,7 +182,8 @@ impl ModuleEnvironment {
             funcs: PrimaryMap::new(),
             imported_funcs: SecondaryMap::new(),
             func_bodies: PrimaryMap::new(),
-            heaps: Vec::new(),
+            heaps: PrimaryMap::new(),
+            imported_heaps: SecondaryMap::new(),
             globs: PrimaryMap::new(),
             modules: PrimaryMap::new(),
             imported_globs: SecondaryMap::new(),
@@ -237,7 +254,15 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         module: &'data str,
         field: Option<&'data str>,
     ) -> wasm::WasmResult<()> {
-        todo!()
+        let index = self.info.heaps.push(Exportable::new(memory));
+        let module_idx = self.info.get_module_idx(module);
+        let vmctx_idx = self.info.get_vmctx_heap_offset(index);
+        self.info.imported_heaps[index] = Some(ImportedHeap {
+            module: module_idx,
+            name: field.unwrap().to_string(), // TODO: can field be None?
+            vmctx_idx,
+        });
+        Ok(())
     }
 
     fn declare_global_import(
@@ -248,6 +273,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
     ) -> wasm::WasmResult<()> {
         let index = self.info.globs.push(Exportable::new(global));
         let module_idx = self.info.get_module_idx(module);
+        // TODO: what if we didn't parse all function declaration yet, is that still correct?
         let vmctx_idx = self.info.get_vmctx_imported_vmctx_offset(module_idx);
         self.info.imported_globs[index] = Some(ImportedGlob {
             module: module_idx,
@@ -263,12 +289,15 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
     }
 
     fn declare_table(&mut self, table: wasm::Table) -> wasm::WasmResult<()> {
-        todo!()
+        // TODO: for now we accept table declaration, but do noting with them.
+        // This enable running basic Rust code (compiled to Wasm) as the compiler emit a table by
+        // default.
+        Ok(())
     }
 
     fn declare_memory(&mut self, memory: wasm::Memory) -> wasm::WasmResult<()> {
         eprintln!("{:?}", &memory);
-        self.info.heaps.push(memory);
+        self.info.heaps.push(Exportable::new(memory));
         Ok(())
     }
 
@@ -299,7 +328,8 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         memory_index: wasm::MemoryIndex,
         name: &'data str,
     ) -> wasm::WasmResult<()> {
-        todo!()
+        self.info.heaps[memory_index].export_as(name.to_string());
+        Ok(())
     }
 
     fn declare_global_export(

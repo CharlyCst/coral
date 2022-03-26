@@ -54,6 +54,7 @@ impl Compiler for X86_64Compiler {
     fn compile(self) -> CompilerResult<SimpleModule> {
         let module_info = self.module.info;
         let mut imported_funcs = module_info.imported_funcs;
+        let mut imported_heaps = module_info.imported_heaps;
         let mut imported_globs = module_info.imported_globs;
         let modules = FrozenMap::freeze(module_info.modules);
 
@@ -80,28 +81,42 @@ impl Compiler for X86_64Compiler {
 
         // Build the heaps info
         let mut heaps = PrimaryMap::new();
-        for heap in module_info.heaps {
+        let mut heaps_names = SecondaryMap::new();
+        for (heap_idx, heap) in module_info.heaps {
+            // TODO: handle imported heaps
+            let names = heap.export_names;
+            let heap = heap.entity;
             let min_size = heap.minimum as u32;
-            let heap = match heap.maximum {
-                Some(max_size) => HeapInfo {
-                    min_size,
-                    kind: HeapKind::Static {
-                        max_size: max_size as u32,
+            let heap = if let Some(import_info) = imported_heaps[heap_idx].take() {
+                HeapInfo::Imported {
+                    module: import_info.module,
+                    name: import_info.name,
+                }
+            } else {
+                match heap.maximum {
+                    Some(max_size) => HeapInfo::Owned {
+                        min_size,
+                        kind: HeapKind::Static {
+                            max_size: max_size as u32,
+                        },
                     },
-                },
-                None => HeapInfo {
-                    min_size,
-                    kind: HeapKind::Dynamic,
-                },
+                    None => HeapInfo::Owned {
+                        min_size,
+                        kind: HeapKind::Dynamic,
+                    },
+                }
             };
-            heaps.push(heap);
+            let heap_idx = heaps.push(heap);
+            heaps_names[heap_idx] = names;
         }
         let heaps = FrozenMap::freeze(heaps);
 
         // Build the globals info
         let mut globs = PrimaryMap::new();
         let mut globs_names = SecondaryMap::new();
-        for (glob_idx, glob_names) in module_info.globs {
+        for (glob_idx, glob) in module_info.globs {
+            let names = glob.export_names;
+            let glob = glob.entity;
             // We move out with `take` to avoid cloning the name
             // TODO: handle imported globals
             let glob = if let Some(import_info) = imported_globs[glob_idx].take() {
@@ -110,17 +125,20 @@ impl Compiler for X86_64Compiler {
                     name: import_info.name,
                 }
             } else {
-                let init = convert_glob_init(glob_names.entity.initializer);
+                let init = convert_glob_init(glob.initializer);
                 GlobInfo::Owned { init }
             };
             let glob_idx = globs.push(glob);
-            globs_names[glob_idx] = glob_names.export_names;
+            globs_names[glob_idx] = names;
         }
         let globs = FrozenMap::freeze(globs);
 
         let mut mod_info = ModuleInfo::new(funcs, heaps, globs, modules);
         for (func_idx, names) in funcs_names.iter() {
             mod_info.export_func(func_idx, names);
+        }
+        for (heap_idx, names) in heaps_names.iter() {
+            mod_info.export_heap(heap_idx, names);
         }
         for (glob_idx, names) in globs_names.iter() {
             mod_info.export_glob(glob_idx, names);
