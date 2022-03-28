@@ -1,9 +1,6 @@
-use core::alloc;
+use alloc::alloc;
 
-pub use cranelift_codegen::binemit::Addend;
-pub use cranelift_codegen::binemit::Reloc as RelocKind;
-
-use crate::collections::{entity_impl, FrozenMap, HashMap};
+use ocean_collections::{entity_impl, FrozenMap, HashMap};
 
 // ——————————————————————————————— Allocator ———————————————————————————————— //
 
@@ -139,6 +136,26 @@ pub trait VMContextLayout {
     fn globs(&self) -> &[GlobIndex];
     fn imports(&self) -> &[ImportIndex];
 }
+
+/// One to one mapping to Cranelift `Reloc`. See Cranelift for details.
+pub enum RelocKind {
+    Abs4,
+    Abs8,
+    X86PCRel4,
+    X86CallPCRel4,
+    X86CallPLTRel4,
+    X86GOTPCRel4,
+    Arm32Call,
+    Arm64Call,
+    S390xPCRel32Dbl,
+    ElfX86_64TlsGd,
+    MachOX86_64Tlv,
+    Aarch64TlsGdAdrPage21,
+    Aarch64TlsGdAddLo12Nc,
+}
+
+/// Addend to add to the symbol value.
+pub type Addend = i64;
 
 pub struct Reloc {
     /// Offset of the relocation, relative to the module's code address.

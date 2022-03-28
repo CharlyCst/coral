@@ -1,16 +1,22 @@
-use cranelift_codegen::binemit::{Addend, CodeOffset, Reloc as RelocKind, RelocSink, TrapSink};
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use cranelift_codegen::binemit::{
+    Addend, CodeOffset, Reloc as CraneliftRelocKind, RelocSink, TrapSink,
+};
 use cranelift_codegen::ir;
 use cranelift_codegen::isa;
 use cranelift_codegen::settings;
 use cranelift_wasm::{translate_module, GlobalInit, ModuleTranslationState};
 
-use crate::collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
+use ocean_collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
+use ocean_wasm::{Compiler, CompilerError, CompilerResult, GlobInit};
+use ocean_wasm::{FuncIndex, FuncInfo, Reloc, RelocKind};
+use ocean_wasm::{GlobInfo, ItemRef};
+use ocean_wasm::{HeapInfo, HeapKind};
+use ocean_wasm::{ModuleInfo, SimpleModule};
+
 use crate::env;
-use crate::modules::{ModuleInfo, SimpleModule};
-use crate::traits::{Compiler, CompilerError, CompilerResult, GlobInit};
-use crate::traits::{FuncIndex, FuncInfo, Reloc};
-use crate::traits::{GlobInfo, ItemRef};
-use crate::traits::{HeapInfo, HeapKind};
 
 // ———————————————————————————————— Compiler ———————————————————————————————— //
 
@@ -44,10 +50,7 @@ impl Compiler for X86_64Compiler {
                 self.module_metadata = Some(module);
                 Ok(())
             }
-            Err(err) => {
-                println!("Compilation Error: {:?}", &err);
-                Err(CompilerError::FailedToParse)
-            }
+            Err(_err) => Err(CompilerError::FailedToParse),
         }
     }
 
@@ -170,10 +173,7 @@ impl Compiler for X86_64Compiler {
                 &mut *traps,
                 &mut *stack_maps,
             )
-            .map_err(|err| {
-                eprintln!("Err: {:?}", err);
-                CompilerError::FailedToCompile
-            })?; // TODO: better error handling
+            .map_err(|_err| CompilerError::FailedToCompile)?; // TODO: better error handling
         }
 
         Ok(SimpleModule::new(mod_info, code, relocs.relocs))
@@ -261,14 +261,25 @@ impl RelocSink for RelocationHandler {
         &mut self,
         offset: CodeOffset,
         _: ir::SourceLoc,
-        kind: RelocKind,
+        kind: CraneliftRelocKind,
         name: &ir::ExternalName,
         addend: Addend,
     ) {
-        println!(
-            "Reloc: offset 0x{:x} - kind {:?} - name {:?} - addend 0x{:x}",
-            offset, kind, name, addend
-        );
+        let kind = match kind {
+            CraneliftRelocKind::Abs4 => RelocKind::Abs4,
+            CraneliftRelocKind::Abs8 => RelocKind::Abs8,
+            CraneliftRelocKind::X86PCRel4 => RelocKind::X86PCRel4,
+            CraneliftRelocKind::X86CallPCRel4 => RelocKind::X86CallPCRel4,
+            CraneliftRelocKind::X86CallPLTRel4 => RelocKind::X86CallPLTRel4,
+            CraneliftRelocKind::X86GOTPCRel4 => RelocKind::X86GOTPCRel4,
+            CraneliftRelocKind::Arm32Call => RelocKind::Arm32Call,
+            CraneliftRelocKind::Arm64Call => RelocKind::Arm64Call,
+            CraneliftRelocKind::S390xPCRel32Dbl => RelocKind::S390xPCRel32Dbl,
+            CraneliftRelocKind::ElfX86_64TlsGd => RelocKind::ElfX86_64TlsGd,
+            CraneliftRelocKind::MachOX86_64Tlv => RelocKind::MachOX86_64Tlv,
+            CraneliftRelocKind::Aarch64TlsGdAdrPage21 => RelocKind::Aarch64TlsGdAdrPage21,
+            CraneliftRelocKind::Aarch64TlsGdAddLo12Nc => RelocKind::Aarch64TlsGdAddLo12Nc,
+        };
 
         self.relocs.push(Reloc {
             offset: self.func_offset + offset as u32,
@@ -284,7 +295,7 @@ impl<'handler> RelocSink for RelocationProxy<'handler> {
         &mut self,
         offset: CodeOffset,
         source_loc: ir::SourceLoc,
-        kind: RelocKind,
+        kind: CraneliftRelocKind,
         name: &ir::ExternalName,
         addend: Addend,
     ) {

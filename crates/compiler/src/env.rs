@@ -1,5 +1,10 @@
 #![allow(unused_variables)]
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use cranelift_codegen::cursor;
 use cranelift_codegen::ir;
 use cranelift_codegen::ir::InstBuilder;
@@ -10,8 +15,8 @@ use cranelift_wasm::{
     DefinedFuncIndex, FuncIndex, GlobalIndex, MemoryIndex, TargetEnvironment, TypeIndex, WasmType,
 };
 
-use crate::collections::{EntityRef, PrimaryMap, SecondaryMap};
-use crate::traits::ImportIndex;
+use ocean_collections::{EntityRef, PrimaryMap, SecondaryMap};
+use ocean_wasm::ImportIndex;
 
 /// Size of a wasm page, defined by the standard.
 const WASM_PAGE_SIZE: u64 = 0x1000;
@@ -296,7 +301,6 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
     }
 
     fn declare_memory(&mut self, memory: wasm::Memory) -> wasm::WasmResult<()> {
-        eprintln!("{:?}", &memory);
         self.info.heaps.push(Exportable::new(memory));
         Ok(())
     }

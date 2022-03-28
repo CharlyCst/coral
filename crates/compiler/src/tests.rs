@@ -1,10 +1,15 @@
+use alloc::vec::Vec;
+use alloc::vec;
+use core::arch::asm;
+
 use wat;
 
 use crate::alloc;
 use crate::compiler;
-use crate::instances::Instance;
-use crate::modules;
-use crate::traits::{Compiler, Module};
+use crate::userspace_alloc::LibcAllocator;
+use ocean_wasm::SimpleModule;
+use ocean_wasm::Instance;
+use ocean_wasm::{Compiler, Module};
 
 #[test]
 fn the_answer() {
@@ -310,7 +315,7 @@ fn the_answer_rust() {
 
 // ———————————————————————————— Helper Functions ———————————————————————————— //
 
-fn compile(wat: &str) -> modules::SimpleModule {
+fn compile(wat: &str) -> SimpleModule {
     let bytecode = wat::parse_str(wat).unwrap();
     let mut comp = compiler::X86_64Compiler::new();
     comp.parse(&bytecode).unwrap();
@@ -319,7 +324,7 @@ fn compile(wat: &str) -> modules::SimpleModule {
 
 /// Execute a module, with no arguments passed to the main function.
 fn execute_0(module: impl Module) -> i32 {
-    let alloc = alloc::LibcAllocator::new();
+    let alloc = LibcAllocator::new();
 
     let instance = Instance::instantiate(&module, vec![], &alloc).unwrap();
 
@@ -341,7 +346,7 @@ fn execute_0(module: impl Module) -> i32 {
 
 /// Execute a module, with 2 arguments passed to the main function.
 fn execute_2(module: impl Module, arg1: i32, arg2: i32) -> i32 {
-    let alloc = alloc::LibcAllocator::new();
+    let alloc = LibcAllocator::new();
 
     let instance = Instance::instantiate(&module, vec![], &alloc).unwrap();
 
@@ -365,7 +370,7 @@ fn execute_2(module: impl Module, arg1: i32, arg2: i32) -> i32 {
 
 /// Execute a module with dependencies, but with 0 arguments passed to the main function.
 fn execute_0_deps(module: impl Module, dependencies: Vec<(&str, impl Module)>) -> i32 {
-    let alloc = alloc::LibcAllocator::new();
+    let alloc = LibcAllocator::new();
 
     let dependencies = dependencies
         .into_iter()
@@ -375,7 +380,7 @@ fn execute_0_deps(module: impl Module, dependencies: Vec<(&str, impl Module)>) -
                 Instance::instantiate(&module, vec![], &alloc).unwrap(),
             )
         })
-        .collect::<Vec<(&str, Instance<alloc::LibcAllocator>)>>();
+        .collect::<Vec<(&str, Instance<LibcAllocator>)>>();
     let instance = Instance::instantiate(&module, dependencies, &alloc).unwrap();
 
     unsafe {

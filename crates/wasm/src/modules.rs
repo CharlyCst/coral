@@ -1,8 +1,8 @@
-use crate::collections::{FrozenMap, HashMap};
 use crate::traits::{
     FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo, ImportIndex, Reloc,
 };
 use crate::traits::{ItemRef, Module, VMContextLayout};
+use ocean_collections::{FrozenMap, HashMap};
 
 // ————————————————————————————————— Module ————————————————————————————————— //
 

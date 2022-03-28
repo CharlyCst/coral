@@ -1,12 +1,12 @@
 #![allow(unused)]
 
-use crate::collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
 use crate::traits::{Allocator, GlobIndex, Module, ModuleError, ModuleResult, VMContextLayout};
 use crate::traits::{
     FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind, ImportIndex, ItemRef,
     RelocKind,
 };
 use crate::vmctx::VMContext;
+use ocean_collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
 
 enum Item<'a, Alloc: Allocator> {
     Func(&'a Func),

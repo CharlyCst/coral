@@ -1,22 +1,9 @@
-#![feature(asm, allocator_api)]
+use core::arch::asm;
 use std::fs;
 
-extern crate alloc as core_alloc;
-
-mod alloc;
-mod collections;
-mod compiler;
-mod env;
-mod instances;
-mod modules;
-mod traits;
-mod vmctx;
-
-#[cfg(test)]
-mod tests;
-
-use instances::Instance;
-use traits::Compiler;
+use ocean_compiler::userspace_alloc::LibcAllocator;
+use ocean_compiler::X86_64Compiler;
+use ocean_wasm::{Compiler, Instance, SimpleModule};
 
 fn main() {
     println!("Kranelift");
@@ -32,7 +19,7 @@ fn main() {
         println!("Compiling: {}", &args[1]);
     }
 
-    let alloc = alloc::LibcAllocator::new();
+    let alloc = LibcAllocator::new();
 
     // Iterate over the args 2 by 2, the first item is the module name, the second the file
     let imported_modules = args[2..]
@@ -44,7 +31,7 @@ fn main() {
             eprintln!("Import: {} from {}", &name, path);
             (name, compile(path))
         })
-        .collect::<Vec<(String, modules::SimpleModule)>>();
+        .collect::<Vec<(String, SimpleModule)>>();
     let imported_instances = imported_modules
         .iter()
         .map(|(name, module)| {
@@ -53,14 +40,14 @@ fn main() {
                 Instance::instantiate(module, vec![], &alloc).unwrap(),
             )
         })
-        .collect::<Vec<(&str, Instance<alloc::LibcAllocator>)>>();
+        .collect::<Vec<(&str, Instance<LibcAllocator>)>>();
 
     let module = compile(&args[1]);
     let instance = Instance::instantiate(&module, imported_instances, &alloc).unwrap();
 
     // Great, now let's try to call that function by hand
     unsafe {
-        let fun = "double_add";
+        let fun = "main";
         let fun_ptr = instance.get_func_addr_from_name(fun).unwrap();
         println!("Fun addr: {:p}", fun_ptr);
 
@@ -71,16 +58,16 @@ fn main() {
         asm!(
             "call {entry_point}",
             entry_point = in(reg) fun_ptr,
-            in("rdi") a,
-            in("rsi") b,
-            in("rdx") vmctx,
+            // in("rdi") a,
+            // in("rsi") b,
+            in("rdi") vmctx,
             out("rax") c,
         );
         println!("{}({}, {}) = {}", fun, a, b, c);
     }
 }
 
-fn compile(file: &str) -> modules::SimpleModule {
+fn compile(file: &str) -> SimpleModule {
     let bytecode = match fs::read(file) {
         Ok(b) => b,
         Err(err) => {
@@ -88,7 +75,7 @@ fn compile(file: &str) -> modules::SimpleModule {
             std::process::exit(1);
         }
     };
-    let mut comp = compiler::X86_64Compiler::new();
+    let mut comp = X86_64Compiler::new();
     comp.parse(&bytecode).unwrap();
     comp.compile().unwrap()
 }

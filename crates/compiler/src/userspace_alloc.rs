@@ -1,4 +1,8 @@
-use crate::traits;
+use alloc::alloc::Allocator;
+use alloc::boxed::Box;
+
+use ocean_wasm;
+use ocean_wasm::HeapKind;
 
 const PAGE_SIZE: usize = 0x1000;
 
@@ -6,7 +10,7 @@ const PAGE_SIZE: usize = 0x1000;
 
 pub struct LibcCodeAllocator();
 
-unsafe impl core::alloc::Allocator for LibcCodeAllocator {
+unsafe impl Allocator for LibcCodeAllocator {
     fn allocate(
         &self,
         _layout: core::alloc::Layout,
@@ -23,7 +27,7 @@ unsafe impl core::alloc::Allocator for LibcCodeAllocator {
 
 pub struct LibcHeapAllocator();
 
-unsafe impl core::alloc::Allocator for LibcHeapAllocator {
+unsafe impl Allocator for LibcHeapAllocator {
     fn allocate(
         &self,
         _layout: core::alloc::Layout,
@@ -64,7 +68,7 @@ impl LibcAllocator {
     }
 }
 
-impl traits::Allocator for LibcAllocator {
+impl ocean_wasm::Allocator for LibcAllocator {
     type CodeAllocator = LibcCodeAllocator;
     type HeapAllocator = LibcHeapAllocator;
 
@@ -123,7 +127,7 @@ impl traits::Allocator for LibcAllocator {
         }
     }
 
-    fn alloc_heap(&self, min_size: u32, _kind: traits::HeapKind) -> Box<[u8], Self::HeapAllocator> {
+    fn alloc_heap(&self, min_size: u32, _kind: HeapKind) -> Box<[u8], Self::HeapAllocator> {
         // Special case for zero-sized allocations
         if min_size == 0 {
             return unsafe {

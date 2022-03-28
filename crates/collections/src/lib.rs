@@ -1,9 +1,12 @@
-#![allow(unused)]
+#![no_std]
+//! ## Collections used through the kernel and compiler.
+//!
+//! For now most of the collections comes directly from Cranelift (through the `cranelift_entity`
+//! crate that is re-exported from `cranelift_codegen`).
 
-/// ## Collections used through the kernel and compiler.
-///
-/// For now most of the collections comes directly from Cranelift (through the `cranelift_entity`
-/// crate that is re-exported from `cranelift_codegen`).
+extern crate alloc;
+use alloc::vec::Vec;
+
 use cranelift_codegen::entity;
 
 use core::marker::PhantomData;
@@ -13,9 +16,7 @@ use core::ops::{Index, IndexMut};
 
 pub use entity::entity_impl;
 pub use entity::{EntityRef, PrimaryMap, SecondaryMap};
-
-// TODO: switch to a no_std hashmap
-pub use std::collections::HashMap;
+pub use hashbrown::HashMap;
 
 // ———————————————————————————— New Collections ————————————————————————————— //
 

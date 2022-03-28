@@ -1,0 +1,27 @@
+[package]
+name = "ocean-compiler"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "oceanc"
+path = "src/bin/oceanc.rs"
+required-features = ["oceanc"]
+
+[features]
+oceanc = ["libc"]
+
+[dependencies]
+ocean-collections = { path = "../collections" }
+ocean-wasm = { path = "../wasm" }
+cranelift-wasm = "0.80.0"
+cranelift-codegen = "0.80.0"
+
+# Used by userspace alloc, needed for userspace execution by oceanc
+libc = { version = "0.2.117", optional = true }
+
+[dev-dependencies]
+# Used for testing
+wat = "1.0"
+libc = "0.2.117"
+

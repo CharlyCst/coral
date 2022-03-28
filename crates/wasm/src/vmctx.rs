@@ -1,9 +1,9 @@
-use crate::collections::EntityRef;
 use crate::traits::{FuncIndex, GlobInit, HeapIndex, ImportIndex};
 use crate::traits::{GlobIndex, VMContextLayout};
+use ocean_collections::EntityRef;
 
+use alloc::alloc::{alloc, dealloc, Layout};
 use core::ptr::NonNull;
-use core_alloc::alloc::{alloc, dealloc, Layout};
 
 /// Size of a pointer, in bytes.
 const PTR_SIZE: usize = core::mem::size_of::<*const u8>();

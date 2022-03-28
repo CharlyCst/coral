@@ -1,0 +1,8 @@
+[package]
+name = "ocean-collections"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cranelift-codegen = "0.80.0"
+hashbrown = "0.9.1"
