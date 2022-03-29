@@ -3,5 +3,5 @@ members = [
     "crates/collections",
     "crates/compiler",
     "crates/wasm",
+    "kernel"
 ]
-
