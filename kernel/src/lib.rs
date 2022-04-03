@@ -1,14 +1,21 @@
 #![no_std]
 #![cfg_attr(test, no_main)]
+#![feature(exclusive_range_pattern)]
 #![feature(custom_test_frameworks)]
+#![feature(alloc_error_handler)]
 #![feature(abi_x86_interrupt)]
+#![feature(const_mut_refs)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
+extern crate alloc;
+
 #[cfg(test)]
-use bootloader::{entry_point, BootInfo};
+use bootloader::entry_point;
+use bootloader::BootInfo;
 use core::panic::PanicInfo;
 
+pub mod allocator;
 pub mod gdt;
 pub mod interrupts;
 pub mod memory;
@@ -28,7 +35,7 @@ fn test_kernel_main(_boot_info: &'static BootInfo) -> ! {
     hlt_loop();
 }
 
-/// Initialize the kernel environment.
+/// Initializes the kernel environment.
 pub fn init() {
     // Initialize description tables
     gdt::init();
@@ -39,12 +46,28 @@ pub fn init() {
     x86_64::instructions::interrupts::enable();
 }
 
+/// Initializes the memory subsystem, this include paging and dynamic allocators (including the
+/// global allocator).
+pub unsafe fn init_memory(boot_info: &'static BootInfo) {
+    let mut mapper = memory::init(x86_64::VirtAddr::new(boot_info.physical_memory_offset));
+    let mut frame_allocator = memory::BootInfoFrameAllocator::init(&boot_info.memory_map);
+    allocator::init_heap(&mut mapper, &mut frame_allocator)
+        .expect("Failed to start the global allocator");
+}
+
 /// An infinite loop that causes the CPU to halt between interrupts.
 pub fn hlt_loop() -> ! {
     loop {
         x86_64::instructions::hlt();
     }
 }
+
+#[alloc_error_handler]
+fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
+    panic!("allocation error: {:?}", layout)
+}
+
+// —————————————————————————————————— Test —————————————————————————————————— //
 
 pub trait Testable {
     fn run(&self) -> ();
