@@ -1,11 +1,16 @@
 #![allow(unused)]
 
-use crate::traits::{Allocator, GlobIndex, Module, ModuleError, ModuleResult, VMContextLayout};
+use crate::alloc::boxed::Box;
+use crate::alloc::string::String;
+use crate::alloc::vec::Vec;
+
 use crate::traits::{
     FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind, ImportIndex, ItemRef,
     RelocKind,
 };
+use crate::traits::{GlobIndex, Module, ModuleError, ModuleResult, VMContextLayout, Allocator};
 use crate::vmctx::VMContext;
+use alloc::borrow::ToOwned;
 use ocean_collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
 
 enum Item<'a, Alloc: Allocator> {
@@ -139,7 +144,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
             }
         })?;
 
-        let items = module.public_items().to_owned();
+        let items = module.public_items().clone();
 
         // Allocate heaps
         let heaps = module.heaps().try_map(|heap_info| match heap_info {

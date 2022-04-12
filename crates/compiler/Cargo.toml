@@ -14,8 +14,9 @@ oceanc = ["libc"]
 [dependencies]
 ocean-collections = { path = "../collections" }
 ocean-wasm = { path = "../wasm" }
-cranelift-wasm = "0.80.0"
-cranelift-codegen = "0.80.0"
+
+cranelift-wasm = { git = "https://github.com/CharlyCst/wasmtime.git", default-features = false, features = ["core"] }
+cranelift-codegen = { git = "https://github.com/CharlyCst/wasmtime.git", default-features = false, features = ["core"] }
 
 # Used by userspace alloc, needed for userspace execution by oceanc
 libc = { version = "0.2.117", optional = true }

@@ -1,4 +1,6 @@
-use alloc::alloc;
+use crate::alloc::alloc;
+use crate::alloc::boxed::Box;
+use crate::alloc::string::String;
 
 use ocean_collections::{entity_impl, FrozenMap, HashMap};
 
@@ -10,6 +12,7 @@ pub enum HeapKind {
     Dynamic,
 }
 
+/// Allocator for text and memory pages.
 pub trait Allocator {
     type CodeAllocator: alloc::Allocator;
     type HeapAllocator: alloc::Allocator;
@@ -18,6 +21,8 @@ pub trait Allocator {
     /// The code allocator is expected to respect a W^X (write XOr execute) policy, if that is the
     /// case the permissions must be switched to X before execution.
     fn alloc_code(&self, code_size: u32) -> Box<[u8], Self::CodeAllocator>;
+
+    /// Set a code page to executable mode.
     fn set_executable(&self, ptr: &Box<[u8], Self::CodeAllocator>);
 
     /// Return a boxed slice of at least `min_size` * PAGE_SIZE writable bytes to be used as heap.

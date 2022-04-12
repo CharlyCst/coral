@@ -1,21 +1,19 @@
 #![no_std]
 //! ## Collections used through the kernel and compiler.
 //!
-//! For now most of the collections comes directly from Cranelift (through the `cranelift_entity`
+//! For now most of the collections comes directly from Cranelift (through the `cranelift_cranelift_entity`
 //! crate that is re-exported from `cranelift_codegen`).
 
 extern crate alloc;
 use alloc::vec::Vec;
-
-use cranelift_codegen::entity;
 
 use core::marker::PhantomData;
 use core::ops::{Index, IndexMut};
 
 // ——————————————————————————————— Re-Exports ——————————————————————————————— //
 
-pub use entity::entity_impl;
-pub use entity::{EntityRef, PrimaryMap, SecondaryMap};
+pub use cranelift_entity::entity_impl;
+pub use cranelift_entity::{EntityRef, PrimaryMap, SecondaryMap};
 pub use hashbrown::HashMap;
 
 // ———————————————————————————— New Collections ————————————————————————————— //
@@ -112,13 +110,13 @@ where
     }
 
     /// Iterate over all keys and values in the map.
-    pub fn iter(&self) -> entity::Iter<K, V> {
-        entity::Iter::new(self.elems.iter())
+    pub fn iter(&self) -> cranelift_entity::Iter<K, V> {
+        cranelift_entity::Iter::new(self.elems.iter())
     }
 
     /// Iterate over all keys and velues in the map.
-    pub fn iter_mut(&mut self) -> entity::IterMut<K, V> {
-        entity::IterMut::new(self.elems.iter_mut())
+    pub fn iter_mut(&mut self) -> cranelift_entity::IterMut<K, V> {
+        cranelift_entity::IterMut::new(self.elems.iter_mut())
     }
 
     /// Iterate over all the values.
@@ -127,8 +125,8 @@ where
     }
 
     /// Iterate over all the keys.
-    pub fn keys(&self) -> entity::Keys<K> {
-        entity::Keys::with_len(self.len())
+    pub fn keys(&self) -> cranelift_entity::Keys<K> {
+        cranelift_entity::Keys::with_len(self.len())
     }
 }
 

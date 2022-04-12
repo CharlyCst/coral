@@ -1,10 +1,15 @@
 #![no_std]
-#![cfg_attr(test, no_main)]
+
+// Some unstable features, to remove once stabilized.
 #![feature(exclusive_range_pattern)]
 #![feature(custom_test_frameworks)]
 #![feature(alloc_error_handler)]
 #![feature(abi_x86_interrupt)]
 #![feature(const_mut_refs)]
+#![feature(allocator_api)]
+
+// Setup test config
+#![cfg_attr(test, no_main)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 

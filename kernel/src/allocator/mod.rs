@@ -11,6 +11,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 mod fallback;
 mod global;
 mod utils;
+mod wasm;
 
 pub use fallback::FallbackAllocator;
 

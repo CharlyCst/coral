@@ -159,7 +159,7 @@ impl ModuleInfo {
             WasmType::F32 => ir::types::F32,
             WasmType::F64 => ir::types::F64,
             WasmType::V128 => ir::types::I8X16,
-            WasmType::FuncRef | WasmType::ExternRef | WasmType::ExnRef => match self.pointer_type()
+            WasmType::FuncRef | WasmType::ExternRef => match self.pointer_type()
             {
                 ir::types::I32 => ir::types::R32,
                 ir::types::I64 => ir::types::R64,
@@ -230,7 +230,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         &mut self,
         ty_idx: wasm::TypeIndex,
         module: &'data str,
-        field: Option<&'data str>,
+        field: &'data str,
     ) -> wasm::WasmResult<()> {
         let index = self.info.funcs.push(Exportable::new(ty_idx));
         self.info.nb_imported_funcs += 1;
@@ -238,7 +238,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         let module_idx = self.info.get_module_idx(module);
         self.info.imported_funcs[index] = Some(ImportedFunc {
             module: module_idx,
-            name: field.unwrap().to_string(), // TODO: can field be None?
+            name: field.to_string(),
             vmctx_idx,
         });
         Ok(())
@@ -248,7 +248,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         &mut self,
         table: wasm::Table,
         module: &'data str,
-        field: Option<&'data str>,
+        field: &'data str,
     ) -> wasm::WasmResult<()> {
         todo!()
     }
@@ -257,14 +257,14 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         &mut self,
         memory: wasm::Memory,
         module: &'data str,
-        field: Option<&'data str>,
+        field: &'data str,
     ) -> wasm::WasmResult<()> {
         let index = self.info.heaps.push(Exportable::new(memory));
         let module_idx = self.info.get_module_idx(module);
         let vmctx_idx = self.info.get_vmctx_heap_offset(index);
         self.info.imported_heaps[index] = Some(ImportedHeap {
             module: module_idx,
-            name: field.unwrap().to_string(), // TODO: can field be None?
+            name: field.to_string(),
             vmctx_idx,
         });
         Ok(())
@@ -274,7 +274,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         &mut self,
         global: wasm::Global,
         module: &'data str,
-        field: Option<&'data str>,
+        field: &'data str,
     ) -> wasm::WasmResult<()> {
         let index = self.info.globs.push(Exportable::new(global));
         let module_idx = self.info.get_module_idx(module);
@@ -282,7 +282,7 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         let vmctx_idx = self.info.get_vmctx_imported_vmctx_offset(module_idx);
         self.info.imported_globs[index] = Some(ImportedGlob {
             module: module_idx,
-            name: field.unwrap().to_string(), // TODO: can field be None?
+            name: field.to_string(),
             vmctx_idx,
         });
         Ok(())
@@ -576,7 +576,7 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
 
     fn translate_call_indirect(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
+        pos: &mut wasm::FunctionBuilder<'_>,
         table_index: wasm::TableIndex,
         table: cranelift_codegen::ir::Table,
         sig_index: TypeIndex,

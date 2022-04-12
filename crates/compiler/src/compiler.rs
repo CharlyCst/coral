@@ -1,12 +1,11 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use cranelift_codegen::binemit::{
-    Addend, CodeOffset, Reloc as CraneliftRelocKind, RelocSink, TrapSink,
-};
+use cranelift_codegen::binemit::Reloc as CraneliftRelocKind;
 use cranelift_codegen::ir;
 use cranelift_codegen::isa;
 use cranelift_codegen::settings;
+use cranelift_codegen::MachReloc;
 use cranelift_wasm::{translate_module, GlobalInit, ModuleTranslationState};
 
 use ocean_collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
@@ -29,7 +28,7 @@ pub struct X86_64Compiler {
 impl X86_64Compiler {
     pub fn new() -> Self {
         let flags = settings::Flags::new(settings::builder());
-        let target_isa = isa::lookup_by_name("x86_64").unwrap().finish(flags);
+        let target_isa = isa::lookup_by_name("x86_64").unwrap().finish(flags).unwrap();
         let module = env::ModuleEnvironment::new(target_isa.frontend_config());
 
         Self {
@@ -149,10 +148,6 @@ impl Compiler for X86_64Compiler {
 
         let mut code = Vec::new();
         let mut relocs = RelocationHandler::new();
-        let mut traps: Box<dyn cranelift_codegen::binemit::TrapSink> = Box::new(TrapHandler::new());
-        // TODO: handle stack maps
-        let mut stack_maps: Box<dyn cranelift_codegen::binemit::StackMapSink> =
-            Box::new(cranelift_codegen::binemit::NullStackMapSink {});
 
         // Compile and emit to memory
         for (_, (func, func_idx)) in module_info.func_bodies.into_iter() {
@@ -165,15 +160,10 @@ impl Compiler for X86_64Compiler {
             let mut ctx = cranelift_codegen::Context::for_function(func);
 
             relocs.set_offset(offset);
-            let mut relocs = relocs.as_dyn();
-            ctx.compile_and_emit(
-                &*self.target_isa,
-                &mut code,
-                &mut *relocs,
-                &mut *traps,
-                &mut *stack_maps,
-            )
-            .map_err(|_err| CompilerError::FailedToCompile)?; // TODO: better error handling
+            ctx.compile_and_emit(&*self.target_isa, &mut code)
+                .map_err(|_err| CompilerError::FailedToCompile)?; // TODO: better error handling
+            let result = ctx.mach_compile_result.unwrap().buffer;
+            relocs.extend_relocs(result.relocs());
         }
 
         Ok(SimpleModule::new(mod_info, code, relocs.relocs))
@@ -196,32 +186,11 @@ fn convert_glob_init(init: GlobalInit) -> GlobInit {
     }
 }
 
-// —————————————————————————————— Trap Handler —————————————————————————————— //
-
-pub struct TrapHandler {}
-
-impl TrapHandler {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl TrapSink for TrapHandler {
-    fn trap(&mut self, _offset: CodeOffset, _loc: ir::SourceLoc, _code: ir::TrapCode) {
-        // NOTE: can be enabled for debugging
-        // eprintln!("Trap at 0x{:x} - loc {:?} - code {:?}", _offset, _loc, _code);
-    }
-}
-
 // ——————————————————————————— Relocation Handler ——————————————————————————— //
 
 pub struct RelocationHandler {
     relocs: Vec<Reloc>,
     func_offset: u32,
-}
-
-pub struct RelocationProxy<'handler> {
-    handler: &'handler mut RelocationHandler,
 }
 
 impl RelocationHandler {
@@ -249,22 +218,20 @@ impl RelocationHandler {
         }
     }
 
-    /// Wrap the relocation handler into a dynamic object.
-    pub fn as_dyn<'a>(&'a mut self) -> Box<dyn RelocSink + 'a> {
-        // TODO: remove allocation
-        Box::new(RelocationProxy { handler: self })
+    /// Registers a slice of relocations.
+    pub fn extend_relocs(&mut self, relocs: &[MachReloc]) {
+        for reloc in relocs {
+            self.push_reloc(reloc);
+        }
     }
-}
 
-impl RelocSink for RelocationHandler {
-    fn reloc_external(
-        &mut self,
-        offset: CodeOffset,
-        _: ir::SourceLoc,
-        kind: CraneliftRelocKind,
-        name: &ir::ExternalName,
-        addend: Addend,
-    ) {
+    /// Registers a single relocation.
+    pub fn push_reloc(&mut self, reloc: &MachReloc) {
+        let offset = reloc.offset;
+        let addend = reloc.addend;
+        let kind = reloc.kind;
+        let name = &reloc.name;
+
         let kind = match kind {
             CraneliftRelocKind::Abs4 => RelocKind::Abs4,
             CraneliftRelocKind::Abs8 => RelocKind::Abs8,
@@ -287,19 +254,5 @@ impl RelocSink for RelocationHandler {
             kind,
             addend,
         });
-    }
-}
-
-impl<'handler> RelocSink for RelocationProxy<'handler> {
-    fn reloc_external(
-        &mut self,
-        offset: CodeOffset,
-        source_loc: ir::SourceLoc,
-        kind: CraneliftRelocKind,
-        name: &ir::ExternalName,
-        addend: Addend,
-    ) {
-        self.handler
-            .reloc_external(offset, source_loc, kind, name, addend)
     }
 }

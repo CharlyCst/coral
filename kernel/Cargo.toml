@@ -5,6 +5,10 @@ authors = ["CharlyCst <castes.ch@gmail.com>"]
 edition = "2021"
 
 [dependencies]
+# Internal Dependencies
+wasm = { package = "ocean-wasm", path = "../crates/wasm" }
+
+# External Dependencies
 bootloader = { version = "0.9.21", features = ["map_physical_memory"] }
 volatile = "0.2.6"
 spin = "0.5.2"

@@ -1,3 +1,6 @@
+use crate::alloc::string::{String, ToString};
+use crate::alloc::vec::Vec;
+
 use crate::traits::{
     FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo, ImportIndex, Reloc,
 };
@@ -44,21 +47,21 @@ impl ModuleInfo {
     pub fn export_func(&mut self, func_idx: FuncIndex, exported_names: &[String]) {
         for exported_name in exported_names {
             self.exported_items
-                .insert((*exported_name).to_owned(), ItemRef::Func(func_idx));
+                .insert((*exported_name).to_string(), ItemRef::Func(func_idx));
         }
     }
 
     pub fn export_heap(&mut self, heap_idx: HeapIndex, exported_names: &[String]) {
         for exported_name in exported_names {
             self.exported_items
-                .insert((*exported_name).to_owned(), ItemRef::Heap(heap_idx));
+                .insert((*exported_name).to_string(), ItemRef::Heap(heap_idx));
         }
     }
 
     pub fn export_glob(&mut self, glob_idx: GlobIndex, exported_names: &[String]) {
         for exported_name in exported_names {
             self.exported_items
-                .insert((*exported_name).to_owned(), ItemRef::Glob(glob_idx));
+                .insert((*exported_name).to_string(), ItemRef::Glob(glob_idx));
         }
     }
 }
