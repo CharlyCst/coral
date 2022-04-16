@@ -1,5 +1,4 @@
 #![no_std]
-
 // Some unstable features, to remove once stabilized.
 #![feature(exclusive_range_pattern)]
 #![feature(custom_test_frameworks)]
@@ -7,7 +6,6 @@
 #![feature(abi_x86_interrupt)]
 #![feature(const_mut_refs)]
 #![feature(allocator_api)]
-
 // Setup test config
 #![cfg_attr(test, no_main)]
 #![test_runner(crate::test_runner)]
@@ -17,6 +15,7 @@ extern crate alloc;
 
 #[cfg(test)]
 use bootloader::entry_point;
+#[cfg(test)]
 use bootloader::BootInfo;
 use core::panic::PanicInfo;
 
@@ -27,6 +26,8 @@ pub mod memory;
 pub mod qemu;
 pub mod serial;
 pub mod vga;
+
+pub use memory::init as init_memory;
 
 #[cfg(test)]
 entry_point!(test_kernel_main);
@@ -49,15 +50,6 @@ pub fn init() {
     // Initialize hardware interrupt
     unsafe { interrupts::PICS.lock().initialize() };
     x86_64::instructions::interrupts::enable();
-}
-
-/// Initializes the memory subsystem, this include paging and dynamic allocators (including the
-/// global allocator).
-pub unsafe fn init_memory(boot_info: &'static BootInfo) {
-    let mut mapper = memory::init(x86_64::VirtAddr::new(boot_info.physical_memory_offset));
-    let mut frame_allocator = memory::BootInfoFrameAllocator::init(&boot_info.memory_map);
-    allocator::init_heap(&mut mapper, &mut frame_allocator)
-        .expect("Failed to start the global allocator");
 }
 
 /// An infinite loop that causes the CPU to halt between interrupts.

@@ -10,11 +10,12 @@ use kernel::println;
 
 entry_point!(kernel_main);
 
-fn kernel_main(_boot_info: &'static BootInfo) -> ! {
+fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Print something and loop forever
     println!("Hello, {}!", "World");
 
     kernel::init();
+    let _allocator = unsafe { kernel::init_memory(boot_info) };
 
     #[cfg(test)]
     test_main();

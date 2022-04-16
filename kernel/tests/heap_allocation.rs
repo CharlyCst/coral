@@ -6,17 +6,24 @@
 
 extern crate alloc;
 
-use bootloader::{entry_point, BootInfo};
-use core::panic::PanicInfo;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use bootloader::{entry_point, BootInfo};
+use core::panic::PanicInfo;
+use spin::Mutex;
+use wasm::{MemoryAeaAllocator, MemoryArea};
+
 use kernel;
+use kernel::memory::VirtualMemoryAreaAllocator;
 
 entry_point!(main);
 
+static ALLOCATOR: Mutex<Option<VirtualMemoryAreaAllocator>> = Mutex::new(None);
+
 fn main(boot_info: &'static BootInfo) -> ! {
     kernel::init();
-    unsafe { kernel::init_memory(boot_info) };
+    let allocator = unsafe { kernel::init_memory(boot_info).unwrap() };
+    **&mut ALLOCATOR.lock() = Some(allocator);
 
     test_main();
 
@@ -40,5 +47,17 @@ fn simple_allocation() {
 fn various_sizes() {
     for pow in 0..13 {
         let _ = Vec::<u8>::with_capacity(0x1 << pow);
+    }
+}
+
+#[test_case]
+fn alloc_vma() {
+    let allocator = ALLOCATOR.lock();
+    let allocator = allocator.as_ref().unwrap();
+    let mut vma = allocator.with_capacity(0x1500).unwrap(); // one page and a half on x86
+
+    // Try to fill the vma
+    for byte in vma.as_bytes_mut() {
+        *byte = 0;
     }
 }

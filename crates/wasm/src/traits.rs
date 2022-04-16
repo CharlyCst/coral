@@ -1,5 +1,3 @@
-use crate::alloc::alloc;
-use crate::alloc::boxed::Box;
 use crate::alloc::string::String;
 
 use ocean_collections::{entity_impl, FrozenMap, HashMap};
@@ -12,21 +10,59 @@ pub enum HeapKind {
     Dynamic,
 }
 
-/// Allocator for text and memory pages.
-pub trait Allocator {
-    type CodeAllocator: alloc::Allocator;
-    type HeapAllocator: alloc::Allocator;
+/// A chunk of memory.
+///
+/// A memory area is associated with access permissions (Read, Write and Execute), therefore
+/// special care must be taken when accessing it as it may throw an exception.
+pub trait MemoryArea {
+    /// Disables write and set execute permission.
+    fn set_executable(&mut self);
 
-    /// Return a boxed slice of `code_size` writable bytes that can receive code.
-    /// The code allocator is expected to respect a W^X (write XOr execute) policy, if that is the
-    /// case the permissions must be switched to X before execution.
-    fn alloc_code(&self, code_size: u32) -> Box<[u8], Self::CodeAllocator>;
+    /// Disables execute and set write permission.
+    fn set_write(&mut self);
 
-    /// Set a code page to executable mode.
-    fn set_executable(&self, ptr: &Box<[u8], Self::CodeAllocator>);
+    /// Disables execute and write permissions.
+    fn set_read_only(&mut self);
 
-    /// Return a boxed slice of at least `min_size` * PAGE_SIZE writable bytes to be used as heap.
-    fn alloc_heap(&self, min_size: u32, kind: HeapKind) -> Box<[u8], Self::HeapAllocator>;
+    /// Returns a pointer to the begining of the area.
+    fn as_ptr(&self) -> *const u8;
+
+    /// Returns a mutable pointer to the begining of the area.
+    fn as_mut_ptr(&mut self) -> *mut u8;
+
+    /// Returns a view of the area.
+    fn as_bytes(&self) -> &[u8];
+
+    /// Returns a mutable view of the area.
+    ///
+    /// WARNING: The write permission must be set in order to write to the area, an exception will
+    /// be raised otherwise.
+    fn as_bytes_mut(&mut self) -> &mut [u8];
+
+    /// Returns the size of the area, in bytes.
+    fn size(&self) -> usize;
+
+    /// Extends the area by at least `n` bytes.
+    fn extend_by(&mut self, n: usize) -> Result<(), ()>;
+
+    /// Extends the area until it can hold at least `n` bytes.
+    fn extend_to(&mut self, n: usize) -> Result<(), ()> {
+        let size = self.size();
+        if size < n {
+            self.extend_by(size - n)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// An allocator that can allocate new memory areas.
+pub trait MemoryAeaAllocator {
+    type Area: MemoryArea;
+
+    /// Allocates a memory area with read and write permissions and at least `capacity` bytes
+    /// availables.
+    fn with_capacity(&self, capacity: usize) -> Result<Self::Area, ()>;
 }
 
 // ———————————————————————————————— Compiler ———————————————————————————————— //

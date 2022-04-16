@@ -6,7 +6,7 @@ use wat;
 
 use crate::alloc;
 use crate::compiler;
-use crate::userspace_alloc::LibcAllocator;
+use crate::userspace_alloc::{LibcAllocator, MMapArea};
 use ocean_wasm::SimpleModule;
 use ocean_wasm::Instance;
 use ocean_wasm::{Compiler, Module};
@@ -380,7 +380,7 @@ fn execute_0_deps(module: impl Module, dependencies: Vec<(&str, impl Module)>) -
                 Instance::instantiate(&module, vec![], &alloc).unwrap(),
             )
         })
-        .collect::<Vec<(&str, Instance<LibcAllocator>)>>();
+        .collect::<Vec<(&str, Instance<MMapArea>)>>();
     let instance = Instance::instantiate(&module, dependencies, &alloc).unwrap();
 
     unsafe {

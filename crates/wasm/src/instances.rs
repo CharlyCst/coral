@@ -8,34 +8,32 @@ use crate::traits::{
     FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind, ImportIndex, ItemRef,
     RelocKind,
 };
-use crate::traits::{GlobIndex, Module, ModuleError, ModuleResult, VMContextLayout, Allocator};
+use crate::traits::{
+    GlobIndex, MemoryAeaAllocator, MemoryArea, Module, ModuleError, ModuleResult, VMContextLayout,
+};
 use crate::vmctx::VMContext;
 use alloc::borrow::ToOwned;
 use ocean_collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
 
-enum Item<'a, Alloc: Allocator> {
+enum Item<'a, Area: MemoryArea> {
     Func(&'a Func),
-    Heap(&'a Heap<Alloc>),
+    Heap(&'a Heap<Area>),
 }
 
-enum Heap<Alloc: Allocator> {
-    Owned {
-        memory: Box<[u8], Alloc::HeapAllocator>,
-    },
-    Imported {
-        from: ImportIndex,
-        index: HeapIndex,
-    },
+enum Heap<Area: MemoryArea> {
+    Owned { memory: Area },
+    Imported { from: ImportIndex, index: HeapIndex },
 }
 
-impl<Alloc: Allocator> Heap<Alloc> {
+impl<Area: MemoryArea> Heap<Area> {
     /// Create a new heap with the given capacity, in number of pages.
-    pub fn with_capacity(capacity: u32, kind: HeapKind, alloc: &Alloc) -> Self {
-        let mut memory = alloc.alloc_heap(capacity, kind);
-        for byte in memory.iter_mut() {
+    pub fn with_capacity(capacity: u32, kind: HeapKind, mut area: Area) -> Self {
+        area.extend_to(capacity as usize);
+        // Zero-out the area
+        for byte in area.as_bytes_mut().iter_mut() {
             *byte = 0;
         }
-        Self::Owned { memory }
+        Self::Owned { memory: area }
     }
 }
 
@@ -49,7 +47,7 @@ enum Glob {
     Imported { from: ImportIndex, index: GlobIndex },
 }
 
-pub struct Instance<Alloc: Allocator> {
+pub struct Instance<Area: MemoryArea> {
     /// A map of all exported symbols.
     items: HashMap<String, ItemRef>,
 
@@ -59,7 +57,7 @@ pub struct Instance<Alloc: Allocator> {
     vmctx: VMContext,
 
     /// The heaps of the instance.
-    heaps: FrozenMap<HeapIndex, Heap<Alloc>>,
+    heaps: FrozenMap<HeapIndex, Heap<Area>>,
 
     /// The functions of the instance.
     funcs: FrozenMap<FuncIndex, Func>,
@@ -68,25 +66,22 @@ pub struct Instance<Alloc: Allocator> {
     globs: FrozenMap<GlobIndex, Glob>,
 
     /// The imported instances.
-    imports: FrozenMap<ImportIndex, Instance<Alloc>>,
+    imports: FrozenMap<ImportIndex, Instance<Area>>,
 
     /// The memory region containing the code
-    code: Box<[u8], Alloc::CodeAllocator>,
+    code: Area,
 }
 
-impl<Alloc: Allocator> Instance<Alloc> {
+impl<Area: MemoryArea> Instance<Area> {
     pub fn instantiate<Mod: Module>(
         module: &Mod,
-        import_from: Vec<(&str, Instance<Alloc>)>,
-        alloc: &Alloc,
-    ) -> ModuleResult<Self>
-    where
-        Alloc: Allocator,
-    {
+        import_from: Vec<(&str, Instance<Area>)>,
+        alloc: &impl MemoryAeaAllocator<Area=Area>,
+    ) -> ModuleResult<Self> {
         let mut import_from = import_from
             .into_iter()
             .map(|x| Some(x))
-            .collect::<Vec<Option<(&str, Instance<Alloc>)>>>();
+            .collect::<Vec<Option<(&str, Instance<Area>)>>>();
         let imports = module.imports().try_map(|module| {
             // Pick the first matching module
             for item in import_from.iter_mut() {
@@ -148,7 +143,12 @@ impl<Alloc: Allocator> Instance<Alloc> {
 
         // Allocate heaps
         let heaps = module.heaps().try_map(|heap_info| match heap_info {
-            HeapInfo::Owned { min_size, kind } => Ok(Heap::with_capacity(*min_size, *kind, alloc)),
+            HeapInfo::Owned { min_size, kind } => {
+                let area = alloc
+                    .with_capacity(*min_size as usize)
+                    .map_err(|_| ModuleError::FailedToInstantiate)?;
+                Ok(Heap::with_capacity(*min_size, *kind, area))
+            }
             HeapInfo::Imported { module, name } => {
                 // Look for the corresponding module
                 let instance = &imports[*module];
@@ -168,8 +168,10 @@ impl<Alloc: Allocator> Instance<Alloc> {
 
         // Allocate code
         let mod_code = module.code();
-        let mut code = alloc.alloc_code(mod_code.len() as u32);
-        code.copy_from_slice(mod_code);
+        let mut code = alloc
+            .with_capacity(mod_code.len())
+            .map_err(|_| ModuleError::FailedToInstantiate)?;
+        code.as_bytes_mut()[..mod_code.len()].copy_from_slice(mod_code);
 
         // Create instance
         let mut instance = Self {
@@ -184,7 +186,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
 
         // Relocate & set code execute-only
         instance.relocate(module)?;
-        alloc.set_executable(&instance.code);
+        instance.code.set_executable();
 
         // Set the VMContext to its expected initial values
         instance.init_vmctx();
@@ -223,16 +225,17 @@ impl<Alloc: Allocator> Instance<Alloc> {
             let value = base + reloc.addend;
 
             let offset = reloc.offset as usize;
+            let code = self.code.as_bytes_mut();
             match reloc.kind {
                 RelocKind::Abs4 => todo!(),
                 RelocKind::Abs8 => {
-                    self.code[offset..][..8].copy_from_slice(&value.to_le_bytes());
+                    code[offset..][..8].copy_from_slice(&value.to_le_bytes());
                 }
                 RelocKind::X86PCRel4 => todo!(),
                 RelocKind::X86CallPCRel4 => {
-                    let pc = self.code.as_ptr().wrapping_add(reloc.offset as usize) as i64;
+                    let pc = code.as_ptr().wrapping_add(reloc.offset as usize) as i64;
                     let pc_relative = (value - pc) as i32;
-                    self.code[offset..][..4].copy_from_slice(&pc_relative.to_le_bytes());
+                    code[offset..][..4].copy_from_slice(&pc_relative.to_le_bytes());
                 }
                 RelocKind::X86CallPLTRel4 => todo!(),
                 RelocKind::X86GOTPCRel4 => todo!(),
@@ -316,7 +319,7 @@ impl<Alloc: Allocator> Instance<Alloc> {
         }
     }
 
-    fn get_item(&self, item: ItemRef) -> Item<'_, Alloc> {
+    fn get_item(&self, item: ItemRef) -> Item<'_, Area> {
         match item {
             ItemRef::Func(idx) => Item::Func(&self.funcs[idx]),
             ItemRef::Heap(idx) => Item::Heap(&self.heaps[idx]),

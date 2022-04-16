@@ -1,17 +1,16 @@
 //! # Heap Allocator
 
-use x86_64::structures::paging::mapper::MapToError;
+use x86_64::structures::paging::mapper::{MapToError, Mapper};
 use x86_64::structures::paging::{Page, PageTableFlags};
 use x86_64::VirtAddr;
 
-use crate::memory::{FrameAllocator, Mapper, Size4KiB};
+use crate::memory::{FrameAllocator, Size4KiB};
 use alloc::alloc::GlobalAlloc;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 mod fallback;
 mod global;
 mod utils;
-mod wasm;
 
 pub use fallback::FallbackAllocator;
 
@@ -22,8 +21,8 @@ static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// Initializes the kernel heap.
 pub fn init_heap(
-    mapper: &mut impl Mapper,
-    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    mapper: &mut impl Mapper<Size4KiB>,
+    frame_allocator: &mut impl FrameAllocator,
 ) -> Result<(), MapToError<Size4KiB>> {
     if IS_INITIALIZED.swap(true, Ordering::SeqCst) {
         // Already initialized
