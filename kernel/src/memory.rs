@@ -163,7 +163,7 @@ impl VirtualMemoryMap {
             let last_available_index = (NB_PTE_ENTRIES - 1) as u64;
             let cursor = VirtAddr::new(first_unused_index << l4_shift);
             let end_at = VirtAddr::new(last_available_index << l4_shift);
-            crate::println!("Memory Map: {:x} -> {:x}", cursor.as_u64(), end_at.as_u64());
+            crate::kprintln!("Memory Map: {:x} -> {:x}", cursor.as_u64(), end_at.as_u64());
             VirtualMemoryMap { cursor, end_at }
         }
     }

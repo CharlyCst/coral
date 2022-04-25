@@ -17,14 +17,14 @@ lazy_static! {
 }
 
 #[macro_export]
-macro_rules! print {
-    ($($arg:tt)*) => ($crate::vga::_print(format_args!($($arg)*)));
+macro_rules! kprint {
+    ($($arg:tt)*) => ($crate::vga::_print(core::format_args!($($arg)*)));
 }
 
 #[macro_export]
-macro_rules! println {
+macro_rules! kprintln {
     () => ($crate::print!("\n"));
-    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)))
+    ($($arg:tt)*) => ($crate::kprint!("{}\n", core::format_args!($($arg)*)))
 }
 
 #[allow(dead_code)]
@@ -151,13 +151,13 @@ mod tests {
 
     #[test_case]
     fn print_simple() {
-        println!("test_println_simple output");
+        kprintln!("test_println_simple output");
     }
 
     #[test_case]
     fn println_many() {
         for _ in 0..200 {
-            println!("test_println many output");
+            kprintln!("test_println many output");
         }
     }
 

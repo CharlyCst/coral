@@ -7,6 +7,7 @@ edition = "2021"
 [dependencies]
 # Internal Dependencies
 wasm = { package = "ocean-wasm", path = "../crates/wasm" }
+compiler = { package = "ocean-compiler", path = "../crates/compiler" }
 
 # External Dependencies
 bootloader = { version = "0.9.21", features = ["map_physical_memory"] }
