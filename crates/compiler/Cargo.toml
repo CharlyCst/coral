@@ -1,24 +1,24 @@
 [package]
-name = "ocean-compiler"
+name = "coral-compiler"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "oceanc"
-path = "src/bin/oceanc.rs"
-required-features = ["oceanc"]
+name = "coralc"
+path = "src/bin/coralc.rs"
+required-features = ["coralc"]
 
 [features]
-oceanc = ["libc"]
+coralc = ["libc"]
 
 [dependencies]
-ocean-collections = { path = "../collections" }
-ocean-wasm = { path = "../wasm" }
+collections = { package = "coral-collections", path = "../collections" }
+wasm = { package = "coral-wasm", path = "../wasm" }
 
 cranelift-wasm = { git = "https://github.com/bytecodealliance/wasmtime.git", rev = "ade04c92c2dca6d8f8609125bf3e80fa8345dab2" }
 cranelift-codegen = { git = "https://github.com/bytecodealliance/wasmtime.git", rev = "ade04c92c2dca6d8f8609125bf3e80fa8345dab2" }
 
-# Used by userspace alloc, needed for userspace execution by oceanc
+# Used by userspace alloc, needed for userspace execution by coralc
 libc = { version = "0.2.117", optional = true }
 
 [dev-dependencies]

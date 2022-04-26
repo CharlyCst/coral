@@ -9,14 +9,14 @@ use cranelift_codegen::cursor;
 use cranelift_codegen::ir;
 use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
-use cranelift_wasm as wasm;
+use cranelift_wasm as cw;
 
 use cranelift_wasm::{
     DefinedFuncIndex, FuncIndex, GlobalIndex, MemoryIndex, TargetEnvironment, TypeIndex, WasmType,
 };
 
-use ocean_collections::{EntityRef, PrimaryMap, SecondaryMap};
-use ocean_wasm::ImportIndex;
+use collections::{EntityRef, PrimaryMap, SecondaryMap};
+use wasm::ImportIndex;
 
 /// Size of a wasm page, defined by the standard.
 const WASM_PAGE_SIZE: u64 = 0x1000;
@@ -91,11 +91,11 @@ pub struct ModuleInfo {
     /// Function bodies
     pub func_bodies: PrimaryMap<DefinedFuncIndex, (ir::Function, FuncIndex)>,
     /// The registered memories
-    pub heaps: PrimaryMap<MemoryIndex, Exportable<wasm::Memory>>,
+    pub heaps: PrimaryMap<MemoryIndex, Exportable<cw::Memory>>,
     /// A mapping MemoryID -> imported_heap_info
     pub imported_heaps: SecondaryMap<MemoryIndex, Option<ImportedHeap>>,
     /// The list of globals
-    pub globs: PrimaryMap<GlobalIndex, Exportable<wasm::Global>>,
+    pub globs: PrimaryMap<GlobalIndex, Exportable<cw::Global>>,
     /// A mapping GlobalID -> imported_glob_info
     pub imported_globs: SecondaryMap<GlobalIndex, Option<ImportedGlob>>,
     /// The list of imported modules
@@ -177,7 +177,7 @@ impl TargetEnvironment for ModuleInfo {
 
 pub struct ModuleEnvironment {
     pub info: ModuleInfo,
-    translator: wasm::FuncTranslator,
+    translator: cw::FuncTranslator,
 }
 
 impl ModuleEnvironment {
@@ -198,7 +198,7 @@ impl ModuleEnvironment {
 
         Self {
             info,
-            translator: wasm::FuncTranslator::new(),
+            translator: cw::FuncTranslator::new(),
         }
     }
 }
@@ -209,8 +209,8 @@ impl TargetEnvironment for ModuleEnvironment {
     }
 }
 
-impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
-    fn declare_type_func(&mut self, wasm_func_type: wasm::WasmFuncType) -> wasm::WasmResult<()> {
+impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
+    fn declare_type_func(&mut self, wasm_func_type: cw::WasmFuncType) -> cw::WasmResult<()> {
         // A small type conversion function
         let mut wasm_to_ir = |ty: &WasmType| ir::AbiParam::new(self.info.wasm_to_ir_type(*ty));
         let mut sig = ir::Signature::new(CallConv::SystemV);
@@ -228,10 +228,10 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
 
     fn declare_func_import(
         &mut self,
-        ty_idx: wasm::TypeIndex,
+        ty_idx: cw::TypeIndex,
         module: &'data str,
         field: &'data str,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         let index = self.info.funcs.push(Exportable::new(ty_idx));
         self.info.nb_imported_funcs += 1;
         let vmctx_idx = self.info.nb_imported_funcs as i32;
@@ -246,19 +246,19 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
 
     fn declare_table_import(
         &mut self,
-        table: wasm::Table,
+        table: cw::Table,
         module: &'data str,
         field: &'data str,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn declare_memory_import(
         &mut self,
-        memory: wasm::Memory,
+        memory: cw::Memory,
         module: &'data str,
         field: &'data str,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         let index = self.info.heaps.push(Exportable::new(memory));
         let module_idx = self.info.get_module_idx(module);
         let vmctx_idx = self.info.get_vmctx_heap_offset(index);
@@ -272,10 +272,10 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
 
     fn declare_global_import(
         &mut self,
-        global: wasm::Global,
+        global: cw::Global,
         module: &'data str,
         field: &'data str,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         let index = self.info.globs.push(Exportable::new(global));
         let module_idx = self.info.get_module_idx(module);
         // TODO: what if we didn't parse all function declaration yet, is that still correct?
@@ -288,98 +288,98 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
         Ok(())
     }
 
-    fn declare_func_type(&mut self, ty_idx: wasm::TypeIndex) -> wasm::WasmResult<()> {
+    fn declare_func_type(&mut self, ty_idx: cw::TypeIndex) -> cw::WasmResult<()> {
         self.info.funcs.push(Exportable::new(ty_idx));
         Ok(())
     }
 
-    fn declare_table(&mut self, table: wasm::Table) -> wasm::WasmResult<()> {
+    fn declare_table(&mut self, table: cw::Table) -> cw::WasmResult<()> {
         // TODO: for now we accept table declaration, but do noting with them.
         // This enable running basic Rust code (compiled to Wasm) as the compiler emit a table by
         // default.
         Ok(())
     }
 
-    fn declare_memory(&mut self, memory: wasm::Memory) -> wasm::WasmResult<()> {
+    fn declare_memory(&mut self, memory: cw::Memory) -> cw::WasmResult<()> {
         self.info.heaps.push(Exportable::new(memory));
         Ok(())
     }
 
-    fn declare_global(&mut self, global: wasm::Global) -> wasm::WasmResult<()> {
+    fn declare_global(&mut self, global: cw::Global) -> cw::WasmResult<()> {
         self.info.globs.push(Exportable::new(global));
         Ok(())
     }
 
     fn declare_func_export(
         &mut self,
-        func_index: wasm::FuncIndex,
+        func_index: cw::FuncIndex,
         name: &'data str,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         self.info.funcs[func_index].export_as(name.to_string());
         Ok(())
     }
 
     fn declare_table_export(
         &mut self,
-        table_index: wasm::TableIndex,
+        table_index: cw::TableIndex,
         name: &'data str,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn declare_memory_export(
         &mut self,
-        memory_index: wasm::MemoryIndex,
+        memory_index: cw::MemoryIndex,
         name: &'data str,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         self.info.heaps[memory_index].export_as(name.to_string());
         Ok(())
     }
 
     fn declare_global_export(
         &mut self,
-        global_index: wasm::GlobalIndex,
+        global_index: cw::GlobalIndex,
         name: &'data str,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         self.info.globs[global_index].export_as(name.to_string());
         Ok(())
     }
 
-    fn declare_start_func(&mut self, index: wasm::FuncIndex) -> wasm::WasmResult<()> {
+    fn declare_start_func(&mut self, index: cw::FuncIndex) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn declare_table_elements(
         &mut self,
-        table_index: wasm::TableIndex,
-        base: Option<wasm::GlobalIndex>,
+        table_index: cw::TableIndex,
+        base: Option<cw::GlobalIndex>,
         offset: u32,
-        elements: Box<[wasm::FuncIndex]>,
-    ) -> wasm::WasmResult<()> {
+        elements: Box<[cw::FuncIndex]>,
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn declare_passive_element(
         &mut self,
-        index: wasm::ElemIndex,
-        elements: Box<[wasm::FuncIndex]>,
-    ) -> wasm::WasmResult<()> {
+        index: cw::ElemIndex,
+        elements: Box<[cw::FuncIndex]>,
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn declare_passive_data(
         &mut self,
-        data_index: wasm::DataIndex,
+        data_index: cw::DataIndex,
         data: &'data [u8],
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn define_function_body(
         &mut self,
-        mut validator: wasm::wasmparser::FuncValidator<wasm::wasmparser::ValidatorResources>,
-        body: wasm::wasmparser::FunctionBody<'data>,
-    ) -> wasm::WasmResult<()> {
+        mut validator: cw::wasmparser::FuncValidator<cw::wasmparser::ValidatorResources>,
+        body: cw::wasmparser::FunctionBody<'data>,
+    ) -> cw::WasmResult<()> {
         let mut fun_env = self.info.get_fun_env();
         // the local functions are declared after the imported ones, and the declaration order is
         // the same for the functions and their bodies.
@@ -395,11 +395,11 @@ impl<'data> wasm::ModuleEnvironment<'data> for ModuleEnvironment {
 
     fn declare_data_initialization(
         &mut self,
-        memory_index: wasm::MemoryIndex,
-        base: Option<wasm::GlobalIndex>,
+        memory_index: cw::MemoryIndex,
+        base: Option<cw::GlobalIndex>,
         offset: u64,
         data: &'data [u8],
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 }
@@ -424,18 +424,18 @@ impl<'info> FunctionEnvironment<'info> {
     }
 }
 
-impl<'info> wasm::TargetEnvironment for FunctionEnvironment<'info> {
+impl<'info> cw::TargetEnvironment for FunctionEnvironment<'info> {
     fn target_config(&self) -> TargetFrontendConfig {
         self.target_config
     }
 }
 
-impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
+impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
     fn make_global(
         &mut self,
         func: &mut ir::Function,
-        index: wasm::GlobalIndex,
-    ) -> wasm::WasmResult<wasm::GlobalVariable> {
+        index: cw::GlobalIndex,
+    ) -> cw::WasmResult<cw::GlobalVariable> {
         // There are two kinds of globals: locally defined and imported globals.
         // - Locally defined globals are stored in the VMContext.
         // - Imported globals are stored in a foreign VMContext but are pointed to by an entry
@@ -451,13 +451,13 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
                 global_type: self.pointer_type(),
                 readonly: false, // We might want to support hot swapping in the future
             });
-            Ok(wasm::GlobalVariable::Memory {
+            Ok(cw::GlobalVariable::Memory {
                 gv: global_ptr,
                 offset: 0.into(), // Directly pointed to
                 ty,
             })
         } else {
-            Ok(wasm::GlobalVariable::Memory {
+            Ok(cw::GlobalVariable::Memory {
                 gv: vmctx,
                 offset,
                 ty,
@@ -468,8 +468,8 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
     fn make_heap(
         &mut self,
         func: &mut ir::Function,
-        index: wasm::MemoryIndex,
-    ) -> wasm::WasmResult<ir::Heap> {
+        index: cw::MemoryIndex,
+    ) -> cw::WasmResult<ir::Heap> {
         // Heaps addresses are stored in the VMContext
         let vmctx = self.vmctx(func);
         let base = func.create_global_value(ir::GlobalValueData::Load {
@@ -493,8 +493,8 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
     fn make_table(
         &mut self,
         func: &mut cranelift_codegen::ir::Function,
-        index: wasm::TableIndex,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Table> {
+        index: cw::TableIndex,
+    ) -> cw::WasmResult<cranelift_codegen::ir::Table> {
         todo!()
     }
 
@@ -502,7 +502,7 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         &mut self,
         func: &mut cranelift_codegen::ir::Function,
         index: TypeIndex,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::SigRef> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::SigRef> {
         todo!()
     }
 
@@ -510,7 +510,7 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         &mut self,
         func: &mut cranelift_codegen::ir::Function,
         index: FuncIndex,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::FuncRef> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::FuncRef> {
         let name = get_func_name(index);
         let signature = self.info.get_func_sig(index);
         // TODO: can we somehow avoid cloning here? Maybe keep a map of SigRef somewhere.
@@ -528,7 +528,7 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         callee_idx: FuncIndex,
         callee: ir::FuncRef,
         call_args: &[ir::Value],
-    ) -> wasm::WasmResult<ir::Inst> {
+    ) -> cw::WasmResult<ir::Inst> {
         // There is a distinction for functions defined inside and outside the module.
         // Functions defined inside can be called directly, whereas the context must be changed for
         // functions defined outside.
@@ -576,72 +576,72 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
 
     fn translate_call_indirect(
         &mut self,
-        pos: &mut wasm::FunctionBuilder<'_>,
-        table_index: wasm::TableIndex,
+        pos: &mut cw::FunctionBuilder<'_>,
+        table_index: cw::TableIndex,
         table: cranelift_codegen::ir::Table,
         sig_index: TypeIndex,
         sig_ref: cranelift_codegen::ir::SigRef,
         callee: cranelift_codegen::ir::Value,
         call_args: &[cranelift_codegen::ir::Value],
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Inst> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::Inst> {
         todo!()
     }
 
     fn translate_memory_grow(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        index: wasm::MemoryIndex,
+        index: cw::MemoryIndex,
         heap: cranelift_codegen::ir::Heap,
         val: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Value> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_memory_size(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        index: wasm::MemoryIndex,
+        index: cw::MemoryIndex,
         heap: cranelift_codegen::ir::Heap,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Value> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_memory_copy(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        src_index: wasm::MemoryIndex,
+        src_index: cw::MemoryIndex,
         src_heap: cranelift_codegen::ir::Heap,
-        dst_index: wasm::MemoryIndex,
+        dst_index: cw::MemoryIndex,
         dst_heap: cranelift_codegen::ir::Heap,
         dst: cranelift_codegen::ir::Value,
         src: cranelift_codegen::ir::Value,
         len: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_memory_fill(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        index: wasm::MemoryIndex,
+        index: cw::MemoryIndex,
         heap: cranelift_codegen::ir::Heap,
         dst: cranelift_codegen::ir::Value,
         val: cranelift_codegen::ir::Value,
         len: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_memory_init(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        index: wasm::MemoryIndex,
+        index: cw::MemoryIndex,
         heap: cranelift_codegen::ir::Heap,
         seg_index: u32,
         dst: cranelift_codegen::ir::Value,
         src: cranelift_codegen::ir::Value,
         len: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
@@ -649,73 +649,73 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
         seg_index: u32,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_table_size(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        index: wasm::TableIndex,
+        index: cw::TableIndex,
         table: cranelift_codegen::ir::Table,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Value> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_table_grow(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        table_index: wasm::TableIndex,
+        table_index: cw::TableIndex,
         table: cranelift_codegen::ir::Table,
         delta: cranelift_codegen::ir::Value,
         init_value: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Value> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_table_get(
         &mut self,
-        builder: &mut wasm::FunctionBuilder,
-        table_index: wasm::TableIndex,
+        builder: &mut cw::FunctionBuilder,
+        table_index: cw::TableIndex,
         table: cranelift_codegen::ir::Table,
         index: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Value> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_table_set(
         &mut self,
-        builder: &mut wasm::FunctionBuilder,
-        table_index: wasm::TableIndex,
+        builder: &mut cw::FunctionBuilder,
+        table_index: cw::TableIndex,
         table: cranelift_codegen::ir::Table,
         value: cranelift_codegen::ir::Value,
         index: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_table_copy(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        dst_table_index: wasm::TableIndex,
+        dst_table_index: cw::TableIndex,
         dst_table: cranelift_codegen::ir::Table,
-        src_table_index: wasm::TableIndex,
+        src_table_index: cw::TableIndex,
         src_table: cranelift_codegen::ir::Table,
         dst: cranelift_codegen::ir::Value,
         src: cranelift_codegen::ir::Value,
         len: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_table_fill(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        table_index: wasm::TableIndex,
+        table_index: cw::TableIndex,
         dst: cranelift_codegen::ir::Value,
         val: cranelift_codegen::ir::Value,
         len: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
@@ -723,12 +723,12 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
         seg_index: u32,
-        table_index: wasm::TableIndex,
+        table_index: cw::TableIndex,
         table: cranelift_codegen::ir::Table,
         dst: cranelift_codegen::ir::Value,
         src: cranelift_codegen::ir::Value,
         len: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
@@ -736,7 +736,7 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
         seg_index: u32,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
@@ -744,47 +744,47 @@ impl<'info> wasm::FuncEnvironment for FunctionEnvironment<'info> {
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
         func_index: FuncIndex,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Value> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_custom_global_get(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        global_index: wasm::GlobalIndex,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Value> {
+        global_index: cw::GlobalIndex,
+    ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_custom_global_set(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        global_index: wasm::GlobalIndex,
+        global_index: cw::GlobalIndex,
         val: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<()> {
+    ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_atomic_wait(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        index: wasm::MemoryIndex,
+        index: cw::MemoryIndex,
         heap: cranelift_codegen::ir::Heap,
         addr: cranelift_codegen::ir::Value,
         expected: cranelift_codegen::ir::Value,
         timeout: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Value> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_atomic_notify(
         &mut self,
         pos: cranelift_codegen::cursor::FuncCursor,
-        index: wasm::MemoryIndex,
+        index: cw::MemoryIndex,
         heap: cranelift_codegen::ir::Heap,
         addr: cranelift_codegen::ir::Value,
         count: cranelift_codegen::ir::Value,
-    ) -> wasm::WasmResult<cranelift_codegen::ir::Value> {
+    ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 

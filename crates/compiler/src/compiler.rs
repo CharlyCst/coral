@@ -8,12 +8,12 @@ use cranelift_codegen::settings;
 use cranelift_codegen::MachReloc;
 use cranelift_wasm::{translate_module, GlobalInit, ModuleTranslationState};
 
-use ocean_collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
-use ocean_wasm::{Compiler, CompilerError, CompilerResult, GlobInit};
-use ocean_wasm::{FuncIndex, FuncInfo, Reloc, RelocKind};
-use ocean_wasm::{GlobInfo, ItemRef};
-use ocean_wasm::{HeapInfo, HeapKind};
-use ocean_wasm::{ModuleInfo, SimpleModule};
+use collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
+use wasm::{Compiler, CompilerError, CompilerResult, GlobInit};
+use wasm::{FuncIndex, FuncInfo, Reloc, RelocKind};
+use wasm::{GlobInfo, ItemRef};
+use wasm::{HeapInfo, HeapKind};
+use wasm::{ModuleInfo, SimpleModule};
 
 use crate::env;
 

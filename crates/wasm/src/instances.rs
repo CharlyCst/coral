@@ -3,6 +3,7 @@
 use crate::alloc::boxed::Box;
 use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
+use crate::alloc::borrow::ToOwned;
 
 use crate::traits::{
     FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind, ImportIndex, ItemRef,
@@ -12,8 +13,7 @@ use crate::traits::{
     GlobIndex, MemoryAeaAllocator, MemoryArea, Module, ModuleError, ModuleResult, VMContextLayout,
 };
 use crate::vmctx::VMContext;
-use alloc::borrow::ToOwned;
-use ocean_collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
+use collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
 
 enum Item<'a, Area: MemoryArea> {
     Func(&'a Func),

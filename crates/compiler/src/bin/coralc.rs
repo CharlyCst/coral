@@ -1,9 +1,9 @@
 use core::arch::asm;
 use std::fs;
 
-use ocean_compiler::userspace_alloc::LibcAllocator;
-use ocean_compiler::X86_64Compiler;
-use ocean_wasm::{Compiler, Instance, SimpleModule};
+use coral_compiler::userspace_alloc::LibcAllocator;
+use coral_compiler::X86_64Compiler;
+use wasm::{Compiler, Instance, SimpleModule};
 
 fn main() {
     println!("Kranelift");

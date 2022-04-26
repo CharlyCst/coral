@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use ocean_wasm::{MemoryAeaAllocator, MemoryArea};
+use wasm::{MemoryAeaAllocator, MemoryArea};
 
 const PAGE_SIZE: usize = 0x1000;
 

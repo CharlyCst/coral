@@ -1,8 +1,8 @@
 [package]
-name = "ocean-wasm"
+name = "coral-wasm"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ocean-collections = { path = "../collections" }
+collections = { package = "coral-collections", path = "../collections" }
 

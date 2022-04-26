@@ -1,6 +1,6 @@
 use crate::alloc::string::String;
 
-use ocean_collections::{entity_impl, FrozenMap, HashMap};
+use collections::{entity_impl, FrozenMap, HashMap};
 
 // ——————————————————————————————— Allocator ———————————————————————————————— //
 

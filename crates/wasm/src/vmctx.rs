@@ -1,6 +1,6 @@
 use crate::traits::{FuncIndex, GlobInit, HeapIndex, ImportIndex};
 use crate::traits::{GlobIndex, VMContextLayout};
-use ocean_collections::EntityRef;
+use collections::EntityRef;
 
 use alloc::alloc::{alloc, dealloc, Layout};
 use core::ptr::NonNull;

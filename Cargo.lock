@@ -39,6 +39,33 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "coral-collections"
+version = "0.1.0"
+dependencies = [
+ "cranelift-entity",
+ "hashbrown 0.9.1",
+]
+
+[[package]]
+name = "coral-compiler"
+version = "0.1.0"
+dependencies = [
+ "coral-collections",
+ "coral-wasm",
+ "cranelift-codegen",
+ "cranelift-wasm",
+ "libc",
+ "wat",
+]
+
+[[package]]
+name = "coral-wasm"
+version = "0.1.0"
+dependencies = [
+ "coral-collections",
+]
+
+[[package]]
 name = "cranelift-bforest"
 version = "0.84.0"
 source = "git+https://github.com/bytecodealliance/wasmtime.git?rev=ade04c92c2dca6d8f8609125bf3e80fa8345dab2#ade04c92c2dca6d8f8609125bf3e80fa8345dab2"
@@ -163,9 +190,9 @@ name = "kernel"
 version = "0.1.0"
 dependencies = [
  "bootloader",
+ "coral-compiler",
+ "coral-wasm",
  "lazy_static",
- "ocean-compiler",
- "ocean-wasm",
  "pc-keyboard",
  "pic8259",
  "spin",
@@ -209,33 +236,6 @@ name = "memchr"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "308cc39be01b73d0d18f82a0e7b2a3df85245f84af96fdddc5d202d27e47b86a"
-
-[[package]]
-name = "ocean-collections"
-version = "0.1.0"
-dependencies = [
- "cranelift-entity",
- "hashbrown 0.9.1",
-]
-
-[[package]]
-name = "ocean-compiler"
-version = "0.1.0"
-dependencies = [
- "cranelift-codegen",
- "cranelift-wasm",
- "libc",
- "ocean-collections",
- "ocean-wasm",
- "wat",
-]
-
-[[package]]
-name = "ocean-wasm"
-version = "0.1.0"
-dependencies = [
- "ocean-collections",
-]
 
 [[package]]
 name = "pc-keyboard"

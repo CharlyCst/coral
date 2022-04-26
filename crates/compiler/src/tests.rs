@@ -7,9 +7,9 @@ use wat;
 use crate::alloc;
 use crate::compiler;
 use crate::userspace_alloc::{LibcAllocator, MMapArea};
-use ocean_wasm::SimpleModule;
-use ocean_wasm::Instance;
-use ocean_wasm::{Compiler, Module};
+use wasm::SimpleModule;
+use wasm::Instance;
+use wasm::{Compiler, Module};
 
 #[test]
 fn the_answer() {
