@@ -6,7 +6,7 @@
 
 use core::panic::PanicInfo;
 use kernel::qemu;
-use kernel::{serial_println, serial_print};
+use kernel::{serial_print, serial_println};
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
@@ -23,7 +23,6 @@ pub fn test_runner(tests: &[&dyn Fn()]) {
     }
     qemu::exit(qemu::ExitCode::Success);
 }
-
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {

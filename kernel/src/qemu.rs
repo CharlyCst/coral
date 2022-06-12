@@ -2,7 +2,7 @@ use x86_64::instructions::port::Port;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(u32)]
-pub enum ExitCode  {
+pub enum ExitCode {
     Success = 0x10,
     Failed = 0x11,
 }

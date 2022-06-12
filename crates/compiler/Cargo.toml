@@ -15,11 +15,20 @@ coralc = ["libc"]
 collections = { package = "coral-collections", path = "../collections" }
 wasm = { package = "coral-wasm", path = "../wasm" }
 
-cranelift-wasm = { git = "https://github.com/bytecodealliance/wasmtime.git", rev = "ade04c92c2dca6d8f8609125bf3e80fa8345dab2" }
-cranelift-codegen = { git = "https://github.com/bytecodealliance/wasmtime.git", rev = "ade04c92c2dca6d8f8609125bf3e80fa8345dab2" }
-
 # Used by userspace alloc, needed for userspace execution by coralc
 libc = { version = "0.2.117", optional = true }
+
+[dependencies.cranelift-wasm]
+git = "https://github.com/CharlyCst/wasmtime.git"
+branch = "restricted-std"
+default-features = false
+features = ["restricted-std"] 
+
+[dependencies.cranelift-codegen]
+git = "https://github.com/CharlyCst/wasmtime.git"
+branch = "restricted-std"
+default-features = false
+features = ["restricted-std"]
 
 [dev-dependencies]
 # Used for testing

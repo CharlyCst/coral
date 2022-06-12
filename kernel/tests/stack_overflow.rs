@@ -38,7 +38,10 @@ fn stack_overflow() {
     volatile::Volatile::new(0).read(); // prevent tail recursion optimization
 }
 
-extern "x86-interrupt" fn test_double_fault_handler(_stack_frame: InterruptStackFrame, _error_code: u64) -> ! {
+extern "x86-interrupt" fn test_double_fault_handler(
+    _stack_frame: InterruptStackFrame,
+    _error_code: u64,
+) -> ! {
     serial_print!("[ok]");
     kernel::qemu::exit(kernel::qemu::ExitCode::Success);
     kernel::hlt_loop();

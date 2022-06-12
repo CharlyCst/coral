@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cranelift-entity = { git = "https://github.com/bytecodealliance/wasmtime.git", rev = "ade04c92c2dca6d8f8609125bf3e80fa8345dab2" }
+cranelift-entity = { git = "https://github.com/CharlyCst/wasmtime.git", branch = "restricted-std" }
 hashbrown = "0.9.1"

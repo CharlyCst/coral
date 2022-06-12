@@ -4,21 +4,47 @@
 #![reexport_test_harness_main = "test_main"]
 
 use bootloader::{entry_point, BootInfo};
+use core::arch::asm;
 use core::panic::PanicInfo;
+use wasm::{Compiler, Instance};
 
-use kernel::kprintln;
 use compiler::X86_64Compiler;
+use kernel::kprintln;
+
+const WASM_USERBOOT: &'static [u8; 37] = std::include_bytes!("../wasm/init.wasm");
 
 entry_point!(kernel_main);
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
-    // Print something and loop forever
     kprintln!("Hello, {}!", "World");
 
     kernel::init();
-    let _allocator = unsafe { kernel::init_memory(boot_info) };
+    let allocator =
+        unsafe { kernel::init_memory(boot_info).expect("Failed to initialize allocator") };
 
-    let mut _compiler = X86_64Compiler::new();
+    let mut compiler = X86_64Compiler::new();
+    compiler
+        .parse(WASM_USERBOOT)
+        .expect("Failed parsing userboot");
+    let module = compiler.compile().expect("Failed compiling userboot");
+    let instance = Instance::instantiate(&module, Vec::new(), &allocator)
+        .expect("Failed to instantiate userboot");
+    let user_init = instance
+        .get_func_addr_from_name("init")
+        .expect("Failed to retrieve 'init' from userboot instance");
+    let vmctx = instance.get_vmctx_ptr();
+
+    let result: u32;
+    unsafe {
+        asm!(
+            "call {entry_point}",
+            entry_point = in(reg) user_init,
+            in("rdi") vmctx,
+            out("rax") result,
+        );
+    }
+
+    kprintln!("Userboot: {}", result);
 
     #[cfg(test)]
     test_main();
