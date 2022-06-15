@@ -13,7 +13,7 @@ use wasm::{Compiler, CompilerError, CompilerResult, GlobInit};
 use wasm::{FuncIndex, FuncInfo, Reloc, RelocKind};
 use wasm::{GlobInfo, ItemRef};
 use wasm::{HeapInfo, HeapKind};
-use wasm::{ModuleInfo, SimpleModule};
+use wasm::{ModuleInfo, WasmModule};
 
 use crate::env;
 
@@ -40,7 +40,7 @@ impl X86_64Compiler {
 }
 
 impl Compiler for X86_64Compiler {
-    type Module = SimpleModule;
+    type Module = WasmModule;
 
     fn parse(&mut self, wasm_bytecode: &[u8]) -> CompilerResult<()> {
         let translation_result = translate_module(wasm_bytecode, &mut self.module);
@@ -53,7 +53,7 @@ impl Compiler for X86_64Compiler {
         }
     }
 
-    fn compile(self) -> CompilerResult<SimpleModule> {
+    fn compile(self) -> CompilerResult<WasmModule> {
         let module_info = self.module.info;
         let mut imported_funcs = module_info.imported_funcs;
         let mut imported_heaps = module_info.imported_heaps;
@@ -154,7 +154,7 @@ impl Compiler for X86_64Compiler {
             let offset = code.len() as u32;
             // transmute index from cranelift_wasm to internal
             let func_idx = FuncIndex::new(func_idx.index());
-            mod_info.set_func_offset(func_idx, offset);
+            mod_info.update_func_offset(func_idx, offset);
             // let fun_info = &self.module.info.funcs[func_idx];
             // mod_info.register_func(&fun_info.export_names, offset);
             let mut ctx = cranelift_codegen::Context::for_function(func);
@@ -166,7 +166,7 @@ impl Compiler for X86_64Compiler {
             relocs.extend_relocs(result.relocs());
         }
 
-        Ok(SimpleModule::new(mod_info, code, relocs.relocs))
+        Ok(WasmModule::new(mod_info, code, relocs.relocs))
     }
 }
 

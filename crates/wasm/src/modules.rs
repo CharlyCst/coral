@@ -2,69 +2,12 @@ use crate::alloc::string::{String, ToString};
 use crate::alloc::vec::Vec;
 
 use crate::traits::{
-    FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo, ImportIndex, Reloc,
+    FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo, ImportIndex, RawFuncPtr, Reloc,
 };
 use crate::traits::{ItemRef, Module, VMContextLayout};
-use collections::{FrozenMap, HashMap};
+use collections::{FrozenMap, HashMap, PrimaryMap};
 
-// ————————————————————————————————— Module ————————————————————————————————— //
-
-pub struct ModuleInfo {
-    exported_items: HashMap<String, ItemRef>,
-    funcs: FrozenMap<FuncIndex, FuncInfo>,
-    heaps: FrozenMap<HeapIndex, HeapInfo>,
-    globs: FrozenMap<GlobIndex, GlobInfo>,
-    imports: FrozenMap<ImportIndex, String>,
-}
-
-impl ModuleInfo {
-    pub fn new(
-        funcs: FrozenMap<FuncIndex, FuncInfo>,
-        heaps: FrozenMap<HeapIndex, HeapInfo>,
-        globs: FrozenMap<GlobIndex, GlobInfo>,
-        imports: FrozenMap<ImportIndex, String>,
-    ) -> Self {
-        Self {
-            exported_items: HashMap::new(),
-            funcs,
-            heaps,
-            globs,
-            imports,
-        }
-    }
-
-    pub fn set_func_offset(&mut self, func_idx: FuncIndex, offset: u32) {
-        match &mut self.funcs[func_idx] {
-            FuncInfo::Owned {
-                offset: previous_offset,
-                ..
-            } => *previous_offset = offset,
-            &mut FuncInfo::Imported { .. } => panic!("Tried to set offset of imported function"),
-        }
-    }
-
-    /// Mark a function as exported under the given list of names.
-    pub fn export_func(&mut self, func_idx: FuncIndex, exported_names: &[String]) {
-        for exported_name in exported_names {
-            self.exported_items
-                .insert((*exported_name).to_string(), ItemRef::Func(func_idx));
-        }
-    }
-
-    pub fn export_heap(&mut self, heap_idx: HeapIndex, exported_names: &[String]) {
-        for exported_name in exported_names {
-            self.exported_items
-                .insert((*exported_name).to_string(), ItemRef::Heap(heap_idx));
-        }
-    }
-
-    pub fn export_glob(&mut self, glob_idx: GlobIndex, exported_names: &[String]) {
-        for exported_name in exported_names {
-            self.exported_items
-                .insert((*exported_name).to_string(), ItemRef::Glob(glob_idx));
-        }
-    }
-}
+// —————————————————————————————————— VMCS —————————————————————————————————— //
 
 #[derive(Clone)]
 pub struct SimpleVMContextLayout {
@@ -108,7 +51,73 @@ impl VMContextLayout for SimpleVMContextLayout {
     }
 }
 
-pub struct SimpleModule {
+// —————————————————————————————— Wasm Module ——————————————————————————————— //
+
+pub struct ModuleInfo {
+    exported_items: HashMap<String, ItemRef>,
+    funcs: FrozenMap<FuncIndex, FuncInfo>,
+    heaps: FrozenMap<HeapIndex, HeapInfo>,
+    globs: FrozenMap<GlobIndex, GlobInfo>,
+    imports: FrozenMap<ImportIndex, String>,
+}
+
+impl ModuleInfo {
+    pub fn new(
+        funcs: FrozenMap<FuncIndex, FuncInfo>,
+        heaps: FrozenMap<HeapIndex, HeapInfo>,
+        globs: FrozenMap<GlobIndex, GlobInfo>,
+        imports: FrozenMap<ImportIndex, String>,
+    ) -> Self {
+        Self {
+            exported_items: HashMap::new(),
+            funcs,
+            heaps,
+            globs,
+            imports,
+        }
+    }
+
+    /// Update the offset of a Wasm function.
+    ///
+    /// This is intended for use by the compiler, as the functions might be defined before the
+    /// final layout is decided. In that case, the offsets can be set after layant rather than at
+    /// declaration time.
+    pub fn update_func_offset(&mut self, func_idx: FuncIndex, offset: u32) {
+        match &mut self.funcs[func_idx] {
+            FuncInfo::Owned {
+                offset: previous_offset,
+                ..
+            } => *previous_offset = offset,
+            FuncInfo::Imported { .. } => panic!("Tried to set offset of imported function"),
+            FuncInfo::Native { .. } => panic!("Tried to set offset of a native function"),
+        }
+    }
+
+    /// Mark a function as exported under the given list of names.
+    pub fn export_func(&mut self, func_idx: FuncIndex, exported_names: &[String]) {
+        for exported_name in exported_names {
+            self.exported_items
+                .insert((*exported_name).to_string(), ItemRef::Func(func_idx));
+        }
+    }
+
+    pub fn export_heap(&mut self, heap_idx: HeapIndex, exported_names: &[String]) {
+        for exported_name in exported_names {
+            self.exported_items
+                .insert((*exported_name).to_string(), ItemRef::Heap(heap_idx));
+        }
+    }
+
+    pub fn export_glob(&mut self, glob_idx: GlobIndex, exported_names: &[String]) {
+        for exported_name in exported_names {
+            self.exported_items
+                .insert((*exported_name).to_string(), ItemRef::Glob(glob_idx));
+        }
+    }
+}
+
+/// A WebAssembly module.
+pub struct WasmModule {
     exported_names: HashMap<String, ItemRef>,
     funcs: FrozenMap<FuncIndex, FuncInfo>,
     heaps: FrozenMap<HeapIndex, HeapInfo>,
@@ -119,7 +128,7 @@ pub struct SimpleModule {
     vmctx_layout: SimpleVMContextLayout,
 }
 
-impl SimpleModule {
+impl WasmModule {
     pub fn new(info: ModuleInfo, code: Vec<u8>, relocs: Vec<Reloc>) -> Self {
         // Compute the VMContext layout
         let nb_imported_funcs = info
@@ -162,7 +171,7 @@ impl SimpleModule {
     }
 }
 
-impl Module for SimpleModule {
+impl Module for WasmModule {
     type VMContext = SimpleVMContextLayout;
 
     fn code(&self) -> &[u8] {
@@ -187,6 +196,100 @@ impl Module for SimpleModule {
 
     fn relocs(&self) -> &[Reloc] {
         &self.relocs
+    }
+
+    fn public_items(&self) -> &HashMap<String, ItemRef> {
+        &self.exported_names
+    }
+
+    fn vmctx_layout(&self) -> &Self::VMContext {
+        &self.vmctx_layout
+    }
+}
+
+// ————————————————————————————— Native Module —————————————————————————————— //
+
+static EMPTY_CODE: [u8; 0] = [];
+static EMPTY_HEAPS: FrozenMap<HeapIndex, HeapInfo> = FrozenMap::empty();
+static EMPTY_GLOBS: FrozenMap<GlobIndex, GlobInfo> = FrozenMap::empty();
+static EMPTY_IMPORTS: FrozenMap<ImportIndex, String> = FrozenMap::empty();
+static EMPTY_RELOCS: [Reloc; 0] = [];
+
+/// A builder for native modules.
+pub struct NativeModuleBuilder {
+    exported_names: HashMap<String, ItemRef>,
+    funcs: PrimaryMap<FuncIndex, FuncInfo>,
+}
+
+impl NativeModuleBuilder {
+    /// Creates a fresh native module builder.
+    pub fn new() -> Self {
+        Self {
+            exported_names: HashMap::new(),
+            funcs: PrimaryMap::new(),
+        }
+    }
+
+    /// Finilizes the native module.
+    pub fn build(self) -> NativeModule {
+        let vmctx_layout = SimpleVMContextLayout::new(
+            self.funcs.keys().collect(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        NativeModule {
+            exported_names: self.exported_names,
+            funcs: FrozenMap::freeze(self.funcs),
+            vmctx_layout,
+        }
+    }
+
+    /// Add a native function to the module.
+    ///
+    /// SAFETY: there is no typecheck yet! The function might be called with unexpected number of
+    /// arguments from Wasm instances!
+    ///
+    /// TODO: add typecheck (i.e. ask or infer the equivalent Wasm type of the function).
+    pub unsafe fn add_func(mut self, name: String, func: RawFuncPtr) -> Self {
+        let idx = self.funcs.push(FuncInfo::Native { ptr: func });
+        self.exported_names.insert(name, ItemRef::Func(idx));
+        self
+    }
+}
+
+/// A module exposing native (Rust) functions and items.
+pub struct NativeModule {
+    exported_names: HashMap<String, ItemRef>,
+    funcs: FrozenMap<FuncIndex, FuncInfo>,
+    vmctx_layout: SimpleVMContextLayout,
+}
+
+impl Module for NativeModule {
+    type VMContext = SimpleVMContextLayout;
+
+    fn code(&self) -> &[u8] {
+        &EMPTY_CODE
+    }
+
+    fn heaps(&self) -> &FrozenMap<HeapIndex, HeapInfo> {
+        &EMPTY_HEAPS
+    }
+
+    fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo> {
+        &self.funcs
+    }
+
+    fn globs(&self) -> &FrozenMap<GlobIndex, GlobInfo> {
+        &EMPTY_GLOBS
+    }
+
+    fn imports(&self) -> &FrozenMap<ImportIndex, String> {
+        &EMPTY_IMPORTS
+    }
+
+    fn relocs(&self) -> &[Reloc] {
+        &EMPTY_RELOCS
     }
 
     fn public_items(&self) -> &HashMap<String, ItemRef> {

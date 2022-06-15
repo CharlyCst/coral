@@ -1,6 +1,7 @@
 use crate::alloc::string::String;
 
 use collections::{entity_impl, FrozenMap, HashMap};
+use core::ptr::NonNull;
 
 // ——————————————————————————————— Allocator ———————————————————————————————— //
 
@@ -136,10 +137,33 @@ impl ItemRef {
     }
 }
 
+/// A raw function pointer.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct RawFuncPtr(NonNull<u8>);
+
+impl RawFuncPtr {
+    /// Creates a raw function pointer.
+    ///
+    /// SAFETY: Note that the pointer might be used to call the function from Wasm Instances, and
+    /// therefore the function must respect the adequate calling convention. At the time of
+    /// writing, this means SystemV calling convention with a `vmctx: u64` as last argument.
+    /// Note that the calling convention might be subject to change, there are no stability
+    /// guarantees yet!
+    pub unsafe fn new(func_ptr: *mut u8) -> Self {
+        Self(NonNull::new(func_ptr).unwrap())
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.0.as_ptr()
+    }
+}
+
 pub enum FuncInfo {
     // TODO: add signatures
     Owned { offset: u32 },
     Imported { module: ImportIndex, name: String },
+    Native { ptr: RawFuncPtr },
 }
 
 impl FuncInfo {
@@ -147,6 +171,7 @@ impl FuncInfo {
         match self {
             FuncInfo::Imported { .. } => true,
             FuncInfo::Owned { .. } => false,
+            FuncInfo::Native { .. } => false,
         }
     }
 }

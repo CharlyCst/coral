@@ -1,15 +1,14 @@
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::arch::asm;
 
 use wat;
 
 use crate::alloc;
+use crate::alloc::string::String;
 use crate::compiler;
 use crate::userspace_alloc::{LibcAllocator, MMapArea};
-use wasm::SimpleModule;
-use wasm::Instance;
-use wasm::{Compiler, Module};
+use wasm::{Compiler, Instance, Module, NativeModuleBuilder, RawFuncPtr, WasmModule};
 
 #[test]
 fn the_answer() {
@@ -179,6 +178,36 @@ fn import() {
 }
 
 #[test]
+fn import_native() {
+    let module = compile(
+        r#"
+        (module
+            (import "answer" "the_answer"
+                (func $the_answer (type $t))
+            )
+            (type $t (func (result i32)))
+            (func $call_imported (result i32)
+                call $the_answer
+            )
+            (export "main" (func $call_imported))
+        )
+        "#,
+    );
+
+    extern "sysv64" fn foreign_func(_vmctx: u64) -> i32 {
+        42
+    }
+    let imported_module = unsafe {
+        let the_answer = RawFuncPtr::new(foreign_func as *mut u8);
+        NativeModuleBuilder::new()
+            .add_func(String::from("the_answer"), the_answer)
+            .build()
+    };
+    let answer = execute_0_deps(module, vec![("answer", imported_module)]);
+    assert_eq!(answer, 42);
+}
+
+#[test]
 fn context_switch() {
     // The memory must not be shared between instances!
     let module = compile(
@@ -315,7 +344,7 @@ fn the_answer_rust() {
 
 // ———————————————————————————— Helper Functions ———————————————————————————— //
 
-fn compile(wat: &str) -> SimpleModule {
+fn compile(wat: &str) -> WasmModule {
     let bytecode = wat::parse_str(wat).unwrap();
     let mut comp = compiler::X86_64Compiler::new();
     comp.parse(&bytecode).unwrap();

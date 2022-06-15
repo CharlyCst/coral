@@ -1,13 +1,13 @@
 #![allow(unused)]
 
+use crate::alloc::borrow::ToOwned;
 use crate::alloc::boxed::Box;
 use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
-use crate::alloc::borrow::ToOwned;
 
 use crate::traits::{
     FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind, ImportIndex, ItemRef,
-    RelocKind,
+    RawFuncPtr, RelocKind,
 };
 use crate::traits::{
     GlobIndex, MemoryAeaAllocator, MemoryArea, Module, ModuleError, ModuleResult, VMContextLayout,
@@ -40,6 +40,7 @@ impl<Area: MemoryArea> Heap<Area> {
 enum Func {
     Owned { offset: u32 },
     Imported { from: ImportIndex, index: FuncIndex },
+    Native { ptr: RawFuncPtr },
 }
 
 enum Glob {
@@ -73,10 +74,11 @@ pub struct Instance<Area: MemoryArea> {
 }
 
 impl<Area: MemoryArea> Instance<Area> {
+    /// Creates an instance from a module.
     pub fn instantiate<Mod: Module>(
         module: &Mod,
         import_from: Vec<(&str, Instance<Area>)>,
-        alloc: &impl MemoryAeaAllocator<Area=Area>,
+        alloc: &impl MemoryAeaAllocator<Area = Area>,
     ) -> ModuleResult<Self> {
         let mut import_from = import_from
             .into_iter()
@@ -97,6 +99,7 @@ impl<Area: MemoryArea> Instance<Area> {
 
         let funcs = module.funcs().try_map(|func_info| match func_info {
             FuncInfo::Owned { offset } => Ok(Func::Owned { offset: *offset }),
+            FuncInfo::Native { ptr } => Ok(Func::Native { ptr: *ptr }),
             FuncInfo::Imported { module, name } => {
                 // Look for the corresponding module
                 let instance = &imports[*module];
@@ -208,6 +211,7 @@ impl<Area: MemoryArea> Instance<Area> {
                 unsafe { Some(addr.offset(*offset as isize)) }
             }
             Func::Imported { from, index: func } => todo!(),
+            Func::Native { ptr } => Some(ptr.as_ptr()),
         }
     }
 
@@ -261,6 +265,7 @@ impl<Area: MemoryArea> Instance<Area> {
                 let instance = &self.imports[*from];
                 instance.get_func_ptr(*index)
             }
+            Func::Native { ptr } => ptr.as_ptr(),
         }
     }
 

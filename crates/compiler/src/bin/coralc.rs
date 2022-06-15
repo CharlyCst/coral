@@ -3,7 +3,7 @@ use std::fs;
 
 use coral_compiler::userspace_alloc::LibcAllocator;
 use coral_compiler::X86_64Compiler;
-use wasm::{Compiler, Instance, SimpleModule};
+use wasm::{Compiler, Instance, WasmModule};
 
 fn main() {
     println!("Kranelift");
@@ -31,7 +31,7 @@ fn main() {
             eprintln!("Import: {} from {}", &name, path);
             (name, compile(path))
         })
-        .collect::<Vec<(String, SimpleModule)>>();
+        .collect::<Vec<(String, WasmModule)>>();
     let imported_instances = imported_modules
         .iter()
         .map(|(name, module)| {
@@ -67,7 +67,7 @@ fn main() {
     }
 }
 
-fn compile(file: &str) -> SimpleModule {
+fn compile(file: &str) -> WasmModule {
     let bytecode = match fs::read(file) {
         Ok(b) => b,
         Err(err) => {

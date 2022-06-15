@@ -31,8 +31,8 @@ impl<K, V> FrozenMap<K, V>
 where
     K: EntityRef,
 {
-    /// Freeze a PrimaryMap, meaning that no new items can be added. It is still possible to mutate
-    /// the existing entries.
+    /// Freezes a PrimaryMap, meaning that no new items can be added. It is still possible to
+    /// mutate the existing entries.
     pub fn freeze(map: PrimaryMap<K, V>) -> Self {
         // PrimaryMap does not expose its internal vector, therefore we nedlessly re-allocate a
         // brand new vector and move all the elements inside.
@@ -127,6 +127,16 @@ where
     /// Iterate over all the keys.
     pub fn keys(&self) -> cranelift_entity::Keys<K> {
         cranelift_entity::Keys::with_len(self.len())
+    }
+}
+
+impl<K, V> FrozenMap<K, V> {
+    /// Creates an empty frozen map.
+    pub const fn empty() -> Self {
+        Self {
+            elems: Vec::new(),
+            unused: PhantomData,
+        }
     }
 }
 
