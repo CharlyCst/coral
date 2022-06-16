@@ -25,6 +25,7 @@ pub mod interrupts;
 pub mod memory;
 pub mod qemu;
 pub mod serial;
+pub mod syscalls;
 pub mod vga;
 
 pub use memory::init as init_memory;

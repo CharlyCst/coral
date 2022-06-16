@@ -16,6 +16,7 @@
 // TODO: Add some tests.
 // The tests should first setup a heap spanning a few frames, and then perform the allocations.
 
+use crate::kprintln;
 use crate::allocator::utils::align_up;
 use alloc::alloc::Layout;
 use core::mem;
@@ -141,6 +142,7 @@ impl FallbackAllocator {
             }
             alloc_start as *mut u8
         } else {
+            kprintln!("[Error] Out Of Memory (OOM)");
             ptr::null_mut()
         }
     }

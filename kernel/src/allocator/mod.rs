@@ -15,7 +15,7 @@ mod utils;
 pub use fallback::FallbackAllocator;
 
 pub const HEAP_START: usize = 0x4444_4444_0000;
-pub const HEAP_SIZE: usize = 20 * 0x1000;
+pub const HEAP_SIZE: usize = 100 * 0x1000;
 
 static IS_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
