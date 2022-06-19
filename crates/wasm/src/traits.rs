@@ -1,5 +1,6 @@
 use crate::alloc::string::String;
 
+use alloc::boxed::Box;
 use collections::{entity_impl, FrozenMap, HashMap};
 use core::ptr::NonNull;
 
@@ -66,27 +67,6 @@ pub trait MemoryAeaAllocator {
     fn with_capacity(&self, capacity: usize) -> Result<Self::Area, ()>;
 }
 
-// ———————————————————————————————— Compiler ———————————————————————————————— //
-
-/// The errors that might occur during compilation.
-///
-/// TODO: collect cummulated errors.
-/// NOTE: We don't want to allocate in the error path as any allocation can fail.
-#[derive(Debug)]
-pub enum CompilerError {
-    FailedToParse,
-    FailedToCompile,
-}
-
-pub type CompilerResult<T> = Result<T, CompilerError>;
-
-pub trait Compiler {
-    type Module;
-
-    fn parse(&mut self, wasm_bytecode: &[u8]) -> CompilerResult<()>;
-    fn compile(self) -> CompilerResult<Self::Module>;
-}
-
 // ————————————————————————————————— Module ————————————————————————————————— //
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -96,6 +76,10 @@ entity_impl!(FuncIndex);
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct HeapIndex(u32);
 entity_impl!(HeapIndex);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct TableIndex(u32);
+entity_impl!(TableIndex);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct GlobIndex(u32);
@@ -110,6 +94,7 @@ entity_impl!(ImportIndex);
 pub enum ItemRef {
     Func(FuncIndex),
     Heap(HeapIndex),
+    Table(TableIndex),
     Glob(GlobIndex),
     Import(ImportIndex),
 }
@@ -126,6 +111,13 @@ impl ItemRef {
         match self {
             ItemRef::Heap(idx) => Some(idx),
             _ => None,
+        }
+    }
+
+    pub fn as_table(self) -> Option<TableIndex> {
+        match self {
+           ItemRef::Table(idx) => Some(idx),
+           _ => None,
         }
     }
 
@@ -181,6 +173,20 @@ pub enum HeapInfo {
     Imported { module: ImportIndex, name: String },
 }
 
+pub enum TableInfo {
+    Owned {
+        min_size: u32,
+        max_size: Option<u32>,
+    },
+    Imported {
+        module: ImportIndex,
+        name: String,
+    },
+    Native {
+        ptr: Box<[*const u8]>,
+    },
+}
+
 /// Possible initial values for a global variable.
 #[derive(Clone, Copy)]
 pub enum GlobInit {
@@ -198,6 +204,7 @@ pub enum GlobInfo {
 
 pub trait VMContextLayout {
     fn heaps(&self) -> &[HeapIndex];
+    fn tables(&self) -> &[TableIndex];
     fn funcs(&self) -> &[FuncIndex];
     fn globs(&self) -> &[GlobIndex];
     fn imports(&self) -> &[ImportIndex];
@@ -251,6 +258,7 @@ pub trait Module {
 
     fn code(&self) -> &[u8];
     fn heaps(&self) -> &FrozenMap<HeapIndex, HeapInfo>;
+    fn tables(&self) -> &FrozenMap<TableIndex, TableInfo>;
     fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo>;
     fn globs(&self) -> &FrozenMap<GlobIndex, GlobInfo>;
     fn imports(&self) -> &FrozenMap<ImportIndex, String>;

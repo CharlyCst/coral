@@ -1,4 +1,4 @@
-use crate::traits::{FuncIndex, GlobInit, HeapIndex, ImportIndex};
+use crate::traits::{FuncIndex, GlobInit, HeapIndex, ImportIndex, TableIndex};
 use crate::traits::{GlobIndex, VMContextLayout};
 use collections::EntityRef;
 
@@ -15,6 +15,7 @@ const ITEM_WIDTH: usize = 8;
 pub struct VMContext {
     ptr: NonNull<u8>,
     layout: Layout,
+    table_offset: usize,
     func_offset: usize,
     import_offset: usize,
     glob_offset: usize,
@@ -28,7 +29,8 @@ impl VMContext {
     pub fn empty(layout: &impl VMContextLayout) -> Self {
         // For now each slot takes 8 bytes, in the future we will have to support other sizes (e.g.
         // for 128 bits globals), but this should be good enough to start with.
-        let func_offset = layout.heaps().len() * ITEM_WIDTH;
+        let table_offset = layout.heaps().len() * ITEM_WIDTH;
+        let func_offset = table_offset + layout.tables().len() * 2; // Tables occupate 2 slots (pointer + bound)
         let import_offset = func_offset + layout.funcs().len() * ITEM_WIDTH;
         let glob_offset = import_offset + layout.imports().len() * ITEM_WIDTH;
         let capacity = glob_offset + layout.globs().len() * ITEM_WIDTH;
@@ -40,6 +42,7 @@ impl VMContext {
         Self {
             ptr,
             layout: alloc_layout,
+            table_offset,
             func_offset,
             import_offset,
             glob_offset,
@@ -50,6 +53,13 @@ impl VMContext {
         unsafe {
             let offset = idx.index() * PTR_SIZE;
             self.wirte_ptr_at(heap_ptr, offset);
+        }
+    }
+
+    pub fn set_table(&mut self, table_ptr: *const u8, idx: TableIndex) {
+        unsafe {
+            let offset = self.table_offset + idx.index() * 2 * PTR_SIZE;
+            self.wirte_ptr_at(table_ptr, offset);
         }
     }
 

@@ -7,7 +7,7 @@ use crate::alloc::vec::Vec;
 
 use crate::traits::{
     FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind, ImportIndex, ItemRef,
-    RawFuncPtr, RelocKind,
+    RawFuncPtr, RelocKind, TableIndex,
 };
 use crate::traits::{
     GlobIndex, MemoryAeaAllocator, MemoryArea, Module, ModuleError, ModuleResult, VMContextLayout,
@@ -37,6 +37,16 @@ impl<Area: MemoryArea> Heap<Area> {
     }
 }
 
+enum Table {
+    // Note: for now we use boxed slices, so that we don't have to handle table relocation (but we
+    // only support fixed size tables then...)
+    Owned(Box<[*const u8]>),
+    Imported {
+        from: ImportIndex,
+        index: TableIndex,
+    },
+}
+
 enum Func {
     Owned { offset: u32 },
     Imported { from: ImportIndex, index: FuncIndex },
@@ -59,6 +69,9 @@ pub struct Instance<Area: MemoryArea> {
 
     /// The heaps of the instance.
     heaps: FrozenMap<HeapIndex, Heap<Area>>,
+
+    /// The tables of the instance.
+    tables: FrozenMap<TableIndex, Table>,
 
     /// The functions of the instance.
     funcs: FrozenMap<FuncIndex, Func>,
@@ -169,6 +182,35 @@ impl<Area: MemoryArea> Instance<Area> {
             }
         })?;
 
+        // Allocate tables
+        let tables = module.tables().try_map(|table_info| match table_info {
+            crate::TableInfo::Owned { min_size, max_size } => {
+                let table_size = if let Some(max_size) = max_size {
+                    *max_size
+                } else {
+                    *min_size
+                } as usize;
+                let table = alloc::vec![0 as *const u8; table_size].into_boxed_slice();
+                Ok(Table::Owned(table))
+            }
+            crate::TableInfo::Native { ptr } => Ok(Table::Owned(ptr.clone())),
+            crate::TableInfo::Imported { module, name } => {
+                // Look for the corresponding module
+                let instance = &imports[*module];
+                let table_ref = instance
+                    .items
+                    .get(name)
+                    .ok_or(ModuleError::FailedToInstantiate)?
+                    .as_table()
+                    .ok_or(ModuleError::FailedToInstantiate)?;
+
+                Ok(Table::Imported {
+                    from: *module,
+                    index: table_ref,
+                })
+            }
+        })?;
+
         // Allocate code
         let mod_code = module.code();
         let mut code = alloc
@@ -182,6 +224,7 @@ impl<Area: MemoryArea> Instance<Area> {
             imports,
             items,
             heaps,
+            tables,
             globs,
             funcs,
             code,
@@ -256,7 +299,7 @@ impl<Area: MemoryArea> Instance<Area> {
         Ok(())
     }
 
-    /// Return the address of a function.
+    /// Returns the address of a function.
     /// Imported functions are resolved through recursive lookups.
     fn get_func_ptr(&self, func: FuncIndex) -> *const u8 {
         match &self.funcs[func] {
@@ -269,7 +312,7 @@ impl<Area: MemoryArea> Instance<Area> {
         }
     }
 
-    /// Return the address of a heap.
+    /// Returns the address of a heap.
     /// Imported heaps are resolved through recursive lookups.
     fn get_heap_ptr(&self, heap: HeapIndex) -> *const u8 {
         match &self.heaps[heap] {
@@ -281,7 +324,19 @@ impl<Area: MemoryArea> Instance<Area> {
         }
     }
 
-    /// Return the address of a global.
+    /// Returns the address of a table.
+    /// Imported tables are resolved through recursive lookups.
+    fn get_table_ptr(&self, table: TableIndex) -> *const u8 {
+        match &self.tables[table] {
+            Table::Owned(table) => table.as_ptr() as *const u8,
+            Table::Imported { from, index } => {
+                let instance = &self.imports[*from];
+                instance.get_table_ptr(*index)
+            }
+        }
+    }
+
+    /// Returns the address of a global.
     /// Imported globals are resolved through recursive lookups.
     fn get_glob_ptr(&self, glob: GlobIndex) -> *const u8 {
         match &self.globs[glob] {
@@ -300,6 +355,10 @@ impl<Area: MemoryArea> Instance<Area> {
         for idx in self.heaps.keys() {
             let ptr = self.get_heap_ptr(idx);
             self.vmctx.set_heap(ptr, idx);
+        }
+        for idx in self.tables.keys() {
+            let ptr = self.get_table_ptr(idx);
+            self.vmctx.set_table(ptr, idx);
         }
         for idx in self.funcs.keys() {
             let ptr = self.get_func_ptr(idx);
@@ -328,6 +387,7 @@ impl<Area: MemoryArea> Instance<Area> {
         match item {
             ItemRef::Func(idx) => Item::Func(&self.funcs[idx]),
             ItemRef::Heap(idx) => Item::Heap(&self.heaps[idx]),
+            ItemRef::Table(idx) => todo!(),
             ItemRef::Glob(idx) => todo!(),
             ItemRef::Import(idx) => todo!(),
         }

@@ -2,20 +2,37 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use cranelift_codegen::binemit::Reloc as CraneliftRelocKind;
-use cranelift_codegen::ir;
-use cranelift_codegen::isa;
-use cranelift_codegen::settings;
-use cranelift_codegen::MachReloc;
-use cranelift_wasm::{translate_module, GlobalInit, ModuleTranslationState};
+use cranelift_codegen::{ir, isa, settings, CodegenError, MachReloc};
+use cranelift_wasm::{translate_module, GlobalInit, ModuleTranslationState, WasmError};
 
 use collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
-use wasm::{Compiler, CompilerError, CompilerResult, GlobInit};
-use wasm::{FuncIndex, FuncInfo, Reloc, RelocKind};
-use wasm::{GlobInfo, ItemRef};
-use wasm::{HeapInfo, HeapKind};
-use wasm::{ModuleInfo, WasmModule};
+use wasm::{
+    FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapInfo, HeapKind, ItemRef, ModuleInfo, Reloc,
+    RelocKind, TableInfo, WasmModule,
+};
 
 use crate::env;
+
+// ————————————————————————————————— Traits ————————————————————————————————— //
+
+/// The errors that might occur during compilation.
+///
+/// TODO: collect cummulated errors.
+/// NOTE: We don't want to allocate in the error path as any allocation can fail.
+#[derive(Debug)]
+pub enum CompilerError {
+    FailedToParse(WasmError),
+    FailedToCompile(CodegenError),
+}
+
+pub type CompilerResult<T> = Result<T, CompilerError>;
+
+pub trait Compiler {
+    type Module;
+
+    fn parse(&mut self, wasm_bytecode: &[u8]) -> CompilerResult<()>;
+    fn compile(self) -> CompilerResult<Self::Module>;
+}
 
 // ———————————————————————————————— Compiler ———————————————————————————————— //
 
@@ -28,7 +45,10 @@ pub struct X86_64Compiler {
 impl X86_64Compiler {
     pub fn new() -> Self {
         let flags = settings::Flags::new(settings::builder());
-        let target_isa = isa::lookup_by_name("x86_64").unwrap().finish(flags).unwrap();
+        let target_isa = isa::lookup_by_name("x86_64")
+            .unwrap()
+            .finish(flags)
+            .unwrap();
         let module = env::ModuleEnvironment::new(target_isa.frontend_config());
 
         Self {
@@ -49,7 +69,7 @@ impl Compiler for X86_64Compiler {
                 self.module_metadata = Some(module);
                 Ok(())
             }
-            Err(_err) => Err(CompilerError::FailedToParse),
+            Err(err) => Err(CompilerError::FailedToParse(err)),
         }
     }
 
@@ -57,6 +77,7 @@ impl Compiler for X86_64Compiler {
         let module_info = self.module.info;
         let mut imported_funcs = module_info.imported_funcs;
         let mut imported_heaps = module_info.imported_heaps;
+        let mut imported_tables = module_info.imported_tables;
         let mut imported_globs = module_info.imported_globs;
         let modules = FrozenMap::freeze(module_info.modules);
 
@@ -85,7 +106,6 @@ impl Compiler for X86_64Compiler {
         let mut heaps = PrimaryMap::new();
         let mut heaps_names = SecondaryMap::new();
         for (heap_idx, heap) in module_info.heaps {
-            // TODO: handle imported heaps
             let names = heap.export_names;
             let heap = heap.entity;
             let min_size = heap.minimum as u32;
@@ -113,6 +133,29 @@ impl Compiler for X86_64Compiler {
         }
         let heaps = FrozenMap::freeze(heaps);
 
+        // Build the tables info
+        let mut tables = PrimaryMap::new();
+        let mut tables_names = SecondaryMap::new();
+        for (table_idx, table) in module_info.tables {
+            // TODO: keep type information into `TableInfo`
+            let names = table.export_names;
+            let table = table.entity;
+            let table = if let Some(import_info) = imported_tables[table_idx].take() {
+                TableInfo::Imported {
+                    module: import_info.module,
+                    name: import_info.name,
+                }
+            } else {
+                TableInfo::Owned {
+                    min_size: table.minimum,
+                    max_size: table.maximum,
+                }
+            };
+            let table_idx = tables.push(table);
+            tables_names[table_idx] = names;
+        }
+        let tables = FrozenMap::freeze(tables);
+
         // Build the globals info
         let mut globs = PrimaryMap::new();
         let mut globs_names = SecondaryMap::new();
@@ -120,7 +163,6 @@ impl Compiler for X86_64Compiler {
             let names = glob.export_names;
             let glob = glob.entity;
             // We move out with `take` to avoid cloning the name
-            // TODO: handle imported globals
             let glob = if let Some(import_info) = imported_globs[glob_idx].take() {
                 GlobInfo::Imported {
                     module: import_info.module,
@@ -135,7 +177,7 @@ impl Compiler for X86_64Compiler {
         }
         let globs = FrozenMap::freeze(globs);
 
-        let mut mod_info = ModuleInfo::new(funcs, heaps, globs, modules);
+        let mut mod_info = ModuleInfo::new(funcs, heaps, tables, globs, modules);
         for (func_idx, names) in funcs_names.iter() {
             mod_info.export_func(func_idx, names);
         }
@@ -161,7 +203,7 @@ impl Compiler for X86_64Compiler {
 
             relocs.set_offset(offset);
             ctx.compile_and_emit(&*self.target_isa, &mut code)
-                .map_err(|_err| CompilerError::FailedToCompile)?; // TODO: better error handling
+                .map_err(|err| CompilerError::FailedToCompile(err))?; // TODO: better error handling
             let result = ctx.mach_compile_result.unwrap().buffer;
             relocs.extend_relocs(result.relocs());
         }

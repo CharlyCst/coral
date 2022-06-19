@@ -7,8 +7,9 @@ use wat;
 use crate::alloc;
 use crate::alloc::string::String;
 use crate::compiler;
+use crate::compiler::Compiler;
 use crate::userspace_alloc::{LibcAllocator, MMapArea};
-use wasm::{Compiler, Instance, Module, NativeModuleBuilder, RawFuncPtr, WasmModule};
+use wasm::{Instance, Module, NativeModuleBuilder, RawFuncPtr, WasmModule};
 
 #[test]
 fn the_answer() {
@@ -178,7 +179,7 @@ fn import() {
 }
 
 #[test]
-fn import_native() {
+fn import_native_func() {
     let module = compile(
         r#"
         (module
@@ -204,6 +205,60 @@ fn import_native() {
             .build()
     };
     let answer = execute_0_deps(module, vec![("answer", imported_module)]);
+    assert_eq!(answer, 42);
+}
+
+#[test]
+fn import_native_table() {
+    let module = compile(
+        r#"
+        (module
+            (import "native_mod" "table"
+                (table $table 2 2 externref)
+            )
+            (func $main (result i32)
+                i32.const 42
+            )
+            (export "main" (func $main))
+        )
+        "#,
+    );
+
+    let table = vec![42 as *const u8, 54 as *const u8];
+    let imported_module = NativeModuleBuilder::new().add_table(String::from("table"), table).build();
+    let answer = execute_0_deps(module, vec![("native_mod", imported_module)]);
+    assert_eq!(answer, 42);
+}
+
+#[test]
+fn table_get_set() {
+    // Swith the position of two table items
+    let module = compile(
+        r#"
+        (module
+            (import "native_mod" "table"
+                (table $table 2 2 externref)
+            )
+            (func $main (result i32)
+                i32.const 1
+                i32.const 0
+                table.get $table
+                ;; i32.const 0
+                ;; i32.const 1
+                ;; table.get $table
+                ;; table.set $table
+                table.set $table
+
+                i32.const 42
+            )
+            (export "main" (func $main))
+        )
+        "#,
+    );
+
+    let table = vec![42 as *const u8, 54 as *const u8];
+    let imported_module = NativeModuleBuilder::new().add_table(String::from("table"), table).build();
+    let answer = execute_0_deps(module, vec![("native_mod", imported_module)]);
     assert_eq!(answer, 42);
 }
 

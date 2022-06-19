@@ -3,6 +3,7 @@ use crate::alloc::vec::Vec;
 
 use crate::traits::{
     FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo, ImportIndex, RawFuncPtr, Reloc,
+    TableIndex, TableInfo,
 };
 use crate::traits::{ItemRef, Module, VMContextLayout};
 use collections::{FrozenMap, HashMap, PrimaryMap};
@@ -13,6 +14,7 @@ use collections::{FrozenMap, HashMap, PrimaryMap};
 pub struct SimpleVMContextLayout {
     funcs: Vec<FuncIndex>,
     heaps: Vec<HeapIndex>,
+    tables: Vec<TableIndex>,
     globs: Vec<GlobIndex>,
     imports: Vec<ImportIndex>,
 }
@@ -21,12 +23,14 @@ impl SimpleVMContextLayout {
     pub fn new(
         funcs: Vec<FuncIndex>,
         heaps: Vec<HeapIndex>,
+        tables: Vec<TableIndex>,
         globs: Vec<GlobIndex>,
         imports: Vec<ImportIndex>,
     ) -> Self {
         Self {
             funcs,
             heaps,
+            tables,
             globs,
             imports,
         }
@@ -36,6 +40,10 @@ impl SimpleVMContextLayout {
 impl VMContextLayout for SimpleVMContextLayout {
     fn heaps(&self) -> &[HeapIndex] {
         &self.heaps
+    }
+
+    fn tables(&self) -> &[TableIndex] {
+        &self.tables
     }
 
     fn funcs(&self) -> &[FuncIndex] {
@@ -57,6 +65,7 @@ pub struct ModuleInfo {
     exported_items: HashMap<String, ItemRef>,
     funcs: FrozenMap<FuncIndex, FuncInfo>,
     heaps: FrozenMap<HeapIndex, HeapInfo>,
+    tables: FrozenMap<TableIndex, TableInfo>,
     globs: FrozenMap<GlobIndex, GlobInfo>,
     imports: FrozenMap<ImportIndex, String>,
 }
@@ -65,6 +74,7 @@ impl ModuleInfo {
     pub fn new(
         funcs: FrozenMap<FuncIndex, FuncInfo>,
         heaps: FrozenMap<HeapIndex, HeapInfo>,
+        tables: FrozenMap<TableIndex, TableInfo>,
         globs: FrozenMap<GlobIndex, GlobInfo>,
         imports: FrozenMap<ImportIndex, String>,
     ) -> Self {
@@ -72,6 +82,7 @@ impl ModuleInfo {
             exported_items: HashMap::new(),
             funcs,
             heaps,
+            tables,
             globs,
             imports,
         }
@@ -121,6 +132,7 @@ pub struct WasmModule {
     exported_names: HashMap<String, ItemRef>,
     funcs: FrozenMap<FuncIndex, FuncInfo>,
     heaps: FrozenMap<HeapIndex, HeapInfo>,
+    tables: FrozenMap<TableIndex, TableInfo>,
     globs: FrozenMap<GlobIndex, GlobInfo>,
     imports: FrozenMap<ImportIndex, String>,
     code: Vec<u8>,
@@ -138,6 +150,7 @@ impl WasmModule {
             .count();
         let mut funcs = Vec::with_capacity(nb_imported_funcs);
         let mut heaps = Vec::with_capacity(info.heaps.len());
+        let mut tables = Vec::with_capacity(info.tables.len());
         let mut globs = Vec::with_capacity(info.globs.len());
         let mut imports = Vec::with_capacity(info.imports.len());
 
@@ -149,6 +162,9 @@ impl WasmModule {
         for heap_idx in info.heaps.keys() {
             heaps.push(heap_idx);
         }
+        for table_idx in info.tables.keys() {
+            tables.push(table_idx);
+        }
         for import_idx in info.imports.keys() {
             imports.push(import_idx);
         }
@@ -156,12 +172,13 @@ impl WasmModule {
             globs.push(glob_idx);
         }
 
-        let vmctx_layout = SimpleVMContextLayout::new(funcs, heaps, globs, imports);
+        let vmctx_layout = SimpleVMContextLayout::new(funcs, heaps, tables, globs, imports);
 
         Self {
             exported_names: info.exported_items,
             funcs: info.funcs,
             heaps: info.heaps,
+            tables: info.tables,
             globs: info.globs,
             imports: info.imports,
             code,
@@ -180,6 +197,10 @@ impl Module for WasmModule {
 
     fn heaps(&self) -> &FrozenMap<HeapIndex, HeapInfo> {
         &self.heaps
+    }
+
+    fn tables(&self) -> &FrozenMap<TableIndex, TableInfo> {
+        &self.tables
     }
 
     fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo> {
@@ -219,6 +240,7 @@ static EMPTY_RELOCS: [Reloc; 0] = [];
 pub struct NativeModuleBuilder {
     exported_names: HashMap<String, ItemRef>,
     funcs: PrimaryMap<FuncIndex, FuncInfo>,
+    tables: PrimaryMap<TableIndex, TableInfo>,
 }
 
 impl NativeModuleBuilder {
@@ -227,6 +249,7 @@ impl NativeModuleBuilder {
         Self {
             exported_names: HashMap::new(),
             funcs: PrimaryMap::new(),
+            tables: PrimaryMap::new(),
         }
     }
 
@@ -235,12 +258,14 @@ impl NativeModuleBuilder {
         let vmctx_layout = SimpleVMContextLayout::new(
             self.funcs.keys().collect(),
             Vec::new(),
+            self.tables.keys().collect(),
             Vec::new(),
             Vec::new(),
         );
         NativeModule {
             exported_names: self.exported_names,
             funcs: FrozenMap::freeze(self.funcs),
+            tables: FrozenMap::freeze(self.tables),
             vmctx_layout,
         }
     }
@@ -256,12 +281,24 @@ impl NativeModuleBuilder {
         self.exported_names.insert(name, ItemRef::Func(idx));
         self
     }
+
+    /// Add a native table to the module.
+    ///
+    /// TODO: add typecheck info (i.e. type of the table elements).
+    pub fn add_table(mut self, name: String, table: Vec<*const u8>) -> Self {
+        let idx = self.tables.push(TableInfo::Native {
+            ptr: table.into_boxed_slice(),
+        });
+        self.exported_names.insert(name, ItemRef::Table(idx));
+        self
+    }
 }
 
 /// A module exposing native (Rust) functions and items.
 pub struct NativeModule {
     exported_names: HashMap<String, ItemRef>,
     funcs: FrozenMap<FuncIndex, FuncInfo>,
+    tables: FrozenMap<TableIndex, TableInfo>,
     vmctx_layout: SimpleVMContextLayout,
 }
 
@@ -274,6 +311,10 @@ impl Module for NativeModule {
 
     fn heaps(&self) -> &FrozenMap<HeapIndex, HeapInfo> {
         &EMPTY_HEAPS
+    }
+
+    fn tables(&self) -> &FrozenMap<TableIndex, TableInfo> {
+        &self.tables
     }
 
     fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo> {

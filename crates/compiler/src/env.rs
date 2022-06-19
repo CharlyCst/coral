@@ -1,4 +1,4 @@
-#![allow(unused_variables)]
+// #![allow(unused_variables)]
 
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
@@ -12,7 +12,8 @@ use cranelift_codegen::isa::{CallConv, TargetFrontendConfig};
 use cranelift_wasm as cw;
 
 use cranelift_wasm::{
-    DefinedFuncIndex, FuncIndex, GlobalIndex, MemoryIndex, TargetEnvironment, TypeIndex, WasmType,
+    DefinedFuncIndex, FuncIndex, GlobalIndex, MemoryIndex, TableIndex, TargetEnvironment,
+    TypeIndex, WasmType,
 };
 
 use collections::{EntityRef, PrimaryMap, SecondaryMap};
@@ -67,8 +68,6 @@ pub struct ImportedHeap {
     pub module: ImportIndex,
     /// The name of the imported heap inside its module.
     pub name: String,
-    /// Index of the heap in the VMContext.
-    pub vmctx_idx: i32,
 }
 
 #[derive(Clone)]
@@ -77,8 +76,14 @@ pub struct ImportedGlob {
     pub module: ImportIndex,
     /// The name of the imported global inside its module.
     pub name: String,
-    /// Index of the pointer to the module's VMContext inside the current VMContext.
-    pub vmctx_idx: i32,
+}
+
+#[derive(Clone)]
+pub struct ImportedTable {
+    /// The index of the module.
+    pub module: ImportIndex,
+    /// The name of the imported global inside its module.
+    pub name: String,
 }
 
 pub struct ModuleInfo {
@@ -98,6 +103,10 @@ pub struct ModuleInfo {
     pub globs: PrimaryMap<GlobalIndex, Exportable<cw::Global>>,
     /// A mapping GlobalID -> imported_glob_info
     pub imported_globs: SecondaryMap<GlobalIndex, Option<ImportedGlob>>,
+    /// The list of tables.
+    pub tables: PrimaryMap<TableIndex, Exportable<cw::Table>>,
+    /// A mapping TableID -> imported_table_info
+    pub imported_tables: SecondaryMap<TableIndex, Option<ImportedTable>>,
     /// The list of imported modules
     pub modules: PrimaryMap<ImportIndex, String>,
     /// The number of imported funcs. The defined functions goes after the imported ones.
@@ -126,7 +135,7 @@ impl ModuleInfo {
         if let Some((idx, _)) = self
             .modules
             .iter()
-            .find(|(idx, known_module)| module == known_module.as_str())
+            .find(|(_, known_module)| module == known_module.as_str())
         {
             idx
         } else {
@@ -134,20 +143,21 @@ impl ModuleInfo {
         }
     }
 
-    fn get_vmctx_heap_offset(&self, heap: MemoryIndex) -> i32 {
-        heap.index() as i32 * VMCTX_ENTRY_WIDTH
-    }
-
-    fn get_vmctx_func_offset(&self, func: &ImportedFunc) -> i32 {
-        (self.heaps.len() as i32 + func.vmctx_idx) * VMCTX_ENTRY_WIDTH
+    fn get_vmctx_table_offset(&self, table: TableIndex) -> i32 {
+        (self.heaps.len() + table.index() * 2) as i32 * VMCTX_ENTRY_WIDTH
     }
 
     fn get_vmctx_imported_vmctx_offset(&self, module: ImportIndex) -> i32 {
-        (self.heaps.len() + self.nb_imported_funcs + module.index()) as i32 * VMCTX_ENTRY_WIDTH
+        (self.heaps.len() + self.tables.len() * 2 + self.nb_imported_funcs + module.index()) as i32
+            * VMCTX_ENTRY_WIDTH
     }
 
     fn get_vmctx_global_offset(&self, global: GlobalIndex) -> i32 {
-        (self.heaps.len() + self.nb_imported_funcs + self.modules.len() + global.index()) as i32
+        (self.heaps.len()
+            + self.tables.len() * 2
+            + self.nb_imported_funcs
+            + self.modules.len()
+            + global.index()) as i32
             * VMCTX_ENTRY_WIDTH
     }
 
@@ -159,8 +169,7 @@ impl ModuleInfo {
             WasmType::F32 => ir::types::F32,
             WasmType::F64 => ir::types::F64,
             WasmType::V128 => ir::types::I8X16,
-            WasmType::FuncRef | WasmType::ExternRef => match self.pointer_type()
-            {
+            WasmType::FuncRef | WasmType::ExternRef => match self.pointer_type() {
                 ir::types::I32 => ir::types::R32,
                 ir::types::I64 => ir::types::R64,
                 _ => panic!("unsupported pointer type"),
@@ -190,8 +199,10 @@ impl ModuleEnvironment {
             heaps: PrimaryMap::new(),
             imported_heaps: SecondaryMap::new(),
             globs: PrimaryMap::new(),
-            modules: PrimaryMap::new(),
             imported_globs: SecondaryMap::new(),
+            tables: PrimaryMap::new(),
+            imported_tables: SecondaryMap::new(),
+            modules: PrimaryMap::new(),
             nb_imported_funcs: 0,
             target_config,
         };
@@ -250,7 +261,13 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
         module: &'data str,
         field: &'data str,
     ) -> cw::WasmResult<()> {
-        todo!()
+        let index = self.info.tables.push(Exportable::new(table));
+        let module_idx = self.info.get_module_idx(module);
+        self.info.imported_tables[index] = Some(ImportedTable {
+            module: module_idx,
+            name: field.to_string(),
+        });
+        Ok(())
     }
 
     fn declare_memory_import(
@@ -261,11 +278,9 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
     ) -> cw::WasmResult<()> {
         let index = self.info.heaps.push(Exportable::new(memory));
         let module_idx = self.info.get_module_idx(module);
-        let vmctx_idx = self.info.get_vmctx_heap_offset(index);
         self.info.imported_heaps[index] = Some(ImportedHeap {
             module: module_idx,
             name: field.to_string(),
-            vmctx_idx,
         });
         Ok(())
     }
@@ -279,11 +294,9 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
         let index = self.info.globs.push(Exportable::new(global));
         let module_idx = self.info.get_module_idx(module);
         // TODO: what if we didn't parse all function declaration yet, is that still correct?
-        let vmctx_idx = self.info.get_vmctx_imported_vmctx_offset(module_idx);
         self.info.imported_globs[index] = Some(ImportedGlob {
             module: module_idx,
             name: field.to_string(),
-            vmctx_idx,
         });
         Ok(())
     }
@@ -294,9 +307,7 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
     }
 
     fn declare_table(&mut self, table: cw::Table) -> cw::WasmResult<()> {
-        // TODO: for now we accept table declaration, but do noting with them.
-        // This enable running basic Rust code (compiled to Wasm) as the compiler emit a table by
-        // default.
+        self.info.tables.push(Exportable::new(table));
         Ok(())
     }
 
@@ -324,7 +335,8 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
         table_index: cw::TableIndex,
         name: &'data str,
     ) -> cw::WasmResult<()> {
-        todo!()
+        self.info.tables[table_index].export_as(name.to_string());
+        Ok(())
     }
 
     fn declare_memory_export(
@@ -345,32 +357,32 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
         Ok(())
     }
 
-    fn declare_start_func(&mut self, index: cw::FuncIndex) -> cw::WasmResult<()> {
+    fn declare_start_func(&mut self, _index: cw::FuncIndex) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn declare_table_elements(
         &mut self,
-        table_index: cw::TableIndex,
-        base: Option<cw::GlobalIndex>,
-        offset: u32,
-        elements: Box<[cw::FuncIndex]>,
+        _table_index: cw::TableIndex,
+        _base: Option<cw::GlobalIndex>,
+        _offset: u32,
+        _elements: Box<[cw::FuncIndex]>,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn declare_passive_element(
         &mut self,
-        index: cw::ElemIndex,
-        elements: Box<[cw::FuncIndex]>,
+        _index: cw::ElemIndex,
+        _elements: Box<[cw::FuncIndex]>,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn declare_passive_data(
         &mut self,
-        data_index: cw::DataIndex,
-        data: &'data [u8],
+        _data_index: cw::DataIndex,
+        _data: &'data [u8],
     ) -> cw::WasmResult<()> {
         todo!()
     }
@@ -395,10 +407,10 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
 
     fn declare_data_initialization(
         &mut self,
-        memory_index: cw::MemoryIndex,
-        base: Option<cw::GlobalIndex>,
-        offset: u64,
-        data: &'data [u8],
+        _memory_index: cw::MemoryIndex,
+        _base: Option<cw::GlobalIndex>,
+        _offset: u64,
+        _data: &'data [u8],
     ) -> cw::WasmResult<()> {
         todo!()
     }
@@ -444,7 +456,7 @@ impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
         let offset = self.info.get_vmctx_global_offset(index).into();
         let global = self.info.globs[index].entity;
         let ty = self.info.wasm_to_ir_type(global.wasm_ty);
-        if let Some(import_info) = &self.info.imported_globs[index] {
+        if self.info.imported_globs[index].is_some() {
             let global_ptr = func.create_global_value(ir::GlobalValueData::Load {
                 base: vmctx,
                 offset,
@@ -468,7 +480,7 @@ impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
     fn make_heap(
         &mut self,
         func: &mut ir::Function,
-        index: cw::MemoryIndex,
+        _index: cw::MemoryIndex,
     ) -> cw::WasmResult<ir::Heap> {
         // Heaps addresses are stored in the VMContext
         let vmctx = self.vmctx(func);
@@ -492,16 +504,40 @@ impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
 
     fn make_table(
         &mut self,
-        func: &mut cranelift_codegen::ir::Function,
+        func: &mut ir::Function,
         index: cw::TableIndex,
-    ) -> cw::WasmResult<cranelift_codegen::ir::Table> {
-        todo!()
+    ) -> cw::WasmResult<ir::Table> {
+        let pointer_type = self.pointer_type();
+        let table = &self.info.tables[index].entity;
+        let reference_type = self.reference_type(table.wasm_ty);
+        let vmctx = self.vmctx(func);
+        let offset = self.info.get_vmctx_table_offset(index);
+
+        let base = func.create_global_value(ir::GlobalValueData::Load {
+            base: vmctx,
+            offset: offset.into(),
+            global_type: pointer_type,
+            readonly: false,
+        });
+        let bound = func.create_global_value(ir::GlobalValueData::Load {
+            base: vmctx,
+            offset: (offset + 1).into(),
+            global_type: ir::types::I32,
+            readonly: false,
+        });
+        Ok(func.create_table(ir::TableData {
+            base_gv: base,
+            min_size: (table.minimum as u64).into(),
+            bound_gv: bound,
+            element_size: (reference_type.bytes() as u64).into(),
+            index_type: ir::types::I32,
+        }))
     }
 
     fn make_indirect_sig(
         &mut self,
-        func: &mut cranelift_codegen::ir::Function,
-        index: TypeIndex,
+        _func: &mut cranelift_codegen::ir::Function,
+        _index: TypeIndex,
     ) -> cw::WasmResult<cranelift_codegen::ir::SigRef> {
         todo!()
     }
@@ -535,7 +571,6 @@ impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
         if let Some(func) = &self.info.imported_funcs[callee_idx] {
             // Indirect call
             let vmctx = self.vmctx(pos.func);
-            let func_offset = self.info.get_vmctx_func_offset(func);
             let vmctx_offset = self.info.get_vmctx_imported_vmctx_offset(func.module);
             // NOTE: we could use the following address for a relative call, which would remove the
             // need for inter-module relocations and therefore allow code sharing.
@@ -576,99 +611,100 @@ impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
 
     fn translate_call_indirect(
         &mut self,
-        pos: &mut cw::FunctionBuilder<'_>,
-        table_index: cw::TableIndex,
-        table: cranelift_codegen::ir::Table,
-        sig_index: TypeIndex,
-        sig_ref: cranelift_codegen::ir::SigRef,
-        callee: cranelift_codegen::ir::Value,
-        call_args: &[cranelift_codegen::ir::Value],
+        _pos: &mut cw::FunctionBuilder<'_>,
+        _table_index: cw::TableIndex,
+        _table: cranelift_codegen::ir::Table,
+        _sig_index: TypeIndex,
+        _sig_ref: cranelift_codegen::ir::SigRef,
+        _callee: cranelift_codegen::ir::Value,
+        _call_args: &[cranelift_codegen::ir::Value],
     ) -> cw::WasmResult<cranelift_codegen::ir::Inst> {
         todo!()
     }
 
     fn translate_memory_grow(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        index: cw::MemoryIndex,
-        heap: cranelift_codegen::ir::Heap,
-        val: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _index: cw::MemoryIndex,
+        _heap: cranelift_codegen::ir::Heap,
+        _val: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_memory_size(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        index: cw::MemoryIndex,
-        heap: cranelift_codegen::ir::Heap,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _index: cw::MemoryIndex,
+        _heap: cranelift_codegen::ir::Heap,
     ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_memory_copy(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        src_index: cw::MemoryIndex,
-        src_heap: cranelift_codegen::ir::Heap,
-        dst_index: cw::MemoryIndex,
-        dst_heap: cranelift_codegen::ir::Heap,
-        dst: cranelift_codegen::ir::Value,
-        src: cranelift_codegen::ir::Value,
-        len: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _src_index: cw::MemoryIndex,
+        _src_heap: cranelift_codegen::ir::Heap,
+        _dst_index: cw::MemoryIndex,
+        _dst_heap: cranelift_codegen::ir::Heap,
+        _dst: cranelift_codegen::ir::Value,
+        _src: cranelift_codegen::ir::Value,
+        _len: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_memory_fill(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        index: cw::MemoryIndex,
-        heap: cranelift_codegen::ir::Heap,
-        dst: cranelift_codegen::ir::Value,
-        val: cranelift_codegen::ir::Value,
-        len: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _index: cw::MemoryIndex,
+        _heap: cranelift_codegen::ir::Heap,
+        _dst: cranelift_codegen::ir::Value,
+        _val: cranelift_codegen::ir::Value,
+        _len: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_memory_init(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        index: cw::MemoryIndex,
-        heap: cranelift_codegen::ir::Heap,
-        seg_index: u32,
-        dst: cranelift_codegen::ir::Value,
-        src: cranelift_codegen::ir::Value,
-        len: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _index: cw::MemoryIndex,
+        _heap: cranelift_codegen::ir::Heap,
+        _seg_index: u32,
+        _dst: cranelift_codegen::ir::Value,
+        _src: cranelift_codegen::ir::Value,
+        _len: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_data_drop(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        seg_index: u32,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _seg_index: u32,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_table_size(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        index: cw::TableIndex,
+        mut pos: cranelift_codegen::cursor::FuncCursor,
+        _index: cw::TableIndex,
         table: cranelift_codegen::ir::Table,
     ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
-        todo!()
+        let size = pos.func.tables[table].bound_gv;
+        Ok(pos.ins().global_value(ir::types::I32, size))
     }
 
     fn translate_table_grow(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        table_index: cw::TableIndex,
-        table: cranelift_codegen::ir::Table,
-        delta: cranelift_codegen::ir::Value,
-        init_value: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _table_index: cw::TableIndex,
+        _table: cranelift_codegen::ir::Table,
+        _delta: cranelift_codegen::ir::Value,
+        _init_value: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
@@ -676,114 +712,129 @@ impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
     fn translate_table_get(
         &mut self,
         builder: &mut cw::FunctionBuilder,
-        table_index: cw::TableIndex,
+        _table_index: cw::TableIndex,
         table: cranelift_codegen::ir::Table,
         index: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
-        todo!()
+        // TODO: get the type corresponding to the table!
+        let table_type = cw::WasmType::ExternRef; // TODO: change me!
+        let pointer_type = self.pointer_type();
+        let reference_type = self.reference_type(table_type);
+
+        // Load the element from the table.
+        let elem_addr = builder.ins().table_addr(pointer_type, table, index, 0);
+        let flags = ir::MemFlags::trusted().with_table();
+        let elem = builder.ins().load(reference_type, flags, elem_addr, 0);
+        Ok(elem)
     }
 
     fn translate_table_set(
         &mut self,
         builder: &mut cw::FunctionBuilder,
-        table_index: cw::TableIndex,
+        _table_index: cw::TableIndex,
         table: cranelift_codegen::ir::Table,
         value: cranelift_codegen::ir::Value,
         index: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<()> {
-        todo!()
+        let pointer_type = self.pointer_type();
+
+        // Store the element into the table.
+        let elem_addr = builder.ins().table_addr(pointer_type, table, index, 0);
+        let flags = ir::MemFlags::trusted().with_table();
+        builder.ins().store(flags, value, elem_addr, 0);
+        Ok(())
     }
 
     fn translate_table_copy(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        dst_table_index: cw::TableIndex,
-        dst_table: cranelift_codegen::ir::Table,
-        src_table_index: cw::TableIndex,
-        src_table: cranelift_codegen::ir::Table,
-        dst: cranelift_codegen::ir::Value,
-        src: cranelift_codegen::ir::Value,
-        len: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _dst_table_index: cw::TableIndex,
+        _dst_table: cranelift_codegen::ir::Table,
+        _src_table_index: cw::TableIndex,
+        _src_table: cranelift_codegen::ir::Table,
+        _dst: cranelift_codegen::ir::Value,
+        _src: cranelift_codegen::ir::Value,
+        _len: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_table_fill(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        table_index: cw::TableIndex,
-        dst: cranelift_codegen::ir::Value,
-        val: cranelift_codegen::ir::Value,
-        len: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _table_index: cw::TableIndex,
+        _dst: cranelift_codegen::ir::Value,
+        _val: cranelift_codegen::ir::Value,
+        _len: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_table_init(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        seg_index: u32,
-        table_index: cw::TableIndex,
-        table: cranelift_codegen::ir::Table,
-        dst: cranelift_codegen::ir::Value,
-        src: cranelift_codegen::ir::Value,
-        len: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _seg_index: u32,
+        _table_index: cw::TableIndex,
+        _table: cranelift_codegen::ir::Table,
+        _dst: cranelift_codegen::ir::Value,
+        _src: cranelift_codegen::ir::Value,
+        _len: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_elem_drop(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        seg_index: u32,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _seg_index: u32,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_ref_func(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        func_index: FuncIndex,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _func_index: FuncIndex,
     ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_custom_global_get(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        global_index: cw::GlobalIndex,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _global_index: cw::GlobalIndex,
     ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_custom_global_set(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        global_index: cw::GlobalIndex,
-        val: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _global_index: cw::GlobalIndex,
+        _val: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<()> {
         todo!()
     }
 
     fn translate_atomic_wait(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        index: cw::MemoryIndex,
-        heap: cranelift_codegen::ir::Heap,
-        addr: cranelift_codegen::ir::Value,
-        expected: cranelift_codegen::ir::Value,
-        timeout: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _index: cw::MemoryIndex,
+        _heap: cranelift_codegen::ir::Heap,
+        _addr: cranelift_codegen::ir::Value,
+        _expected: cranelift_codegen::ir::Value,
+        _timeout: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
 
     fn translate_atomic_notify(
         &mut self,
-        pos: cranelift_codegen::cursor::FuncCursor,
-        index: cw::MemoryIndex,
-        heap: cranelift_codegen::ir::Heap,
-        addr: cranelift_codegen::ir::Value,
-        count: cranelift_codegen::ir::Value,
+        _pos: cranelift_codegen::cursor::FuncCursor,
+        _index: cw::MemoryIndex,
+        _heap: cranelift_codegen::ir::Heap,
+        _addr: cranelift_codegen::ir::Value,
+        _count: cranelift_codegen::ir::Value,
     ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
         todo!()
     }
