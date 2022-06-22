@@ -37,7 +37,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let userboot = Instance::instantiate(&user_module, vec![("coral", coral_instance)], &allocator)
         .expect("Failed to instantiate userboot");
     let userboot_init = userboot
-        .get_func_addr_from_name("init")
+        .get_func_addr_by_name("init")
         .expect("Failed to retrieve 'init' from userboot instance");
     let vmctx = userboot.get_vmctx_ptr();
 

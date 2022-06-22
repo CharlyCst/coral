@@ -521,7 +521,7 @@ impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
         });
         let bound = func.create_global_value(ir::GlobalValueData::Load {
             base: vmctx,
-            offset: (offset + 1).into(),
+            offset: (offset + VMCTX_ENTRY_WIDTH).into(),
             global_type: ir::types::I32,
             readonly: false,
         });
@@ -713,9 +713,9 @@ impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
         &mut self,
         builder: &mut cw::FunctionBuilder,
         _table_index: cw::TableIndex,
-        table: cranelift_codegen::ir::Table,
-        index: cranelift_codegen::ir::Value,
-    ) -> cw::WasmResult<cranelift_codegen::ir::Value> {
+        table: ir::Table,
+        index: ir::Value,
+    ) -> cw::WasmResult<ir::Value> {
         // TODO: get the type corresponding to the table!
         let table_type = cw::WasmType::ExternRef; // TODO: change me!
         let pointer_type = self.pointer_type();

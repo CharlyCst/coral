@@ -30,7 +30,7 @@ impl VMContext {
         // For now each slot takes 8 bytes, in the future we will have to support other sizes (e.g.
         // for 128 bits globals), but this should be good enough to start with.
         let table_offset = layout.heaps().len() * ITEM_WIDTH;
-        let func_offset = table_offset + layout.tables().len() * 2; // Tables occupate 2 slots (pointer + bound)
+        let func_offset = table_offset + layout.tables().len() * 2 * ITEM_WIDTH; // Tables occupate 2 slots (pointer + bound)
         let import_offset = func_offset + layout.funcs().len() * ITEM_WIDTH;
         let glob_offset = import_offset + layout.imports().len() * ITEM_WIDTH;
         let capacity = glob_offset + layout.globs().len() * ITEM_WIDTH;
@@ -56,10 +56,11 @@ impl VMContext {
         }
     }
 
-    pub fn set_table(&mut self, table_ptr: *const u8, idx: TableIndex) {
+    pub fn set_table(&mut self, table_ptr: *const u8, bound: usize, idx: TableIndex) {
         unsafe {
             let offset = self.table_offset + idx.index() * 2 * PTR_SIZE;
             self.wirte_ptr_at(table_ptr, offset);
+            self.write_bound_at(bound, offset + PTR_SIZE);
         }
     }
 
@@ -108,9 +109,16 @@ impl VMContext {
         self.ptr.as_ptr()
     }
 
+    /// Writes a pointer to the VmContext.
     unsafe fn wirte_ptr_at(&mut self, ptr: *const u8, offset: usize) {
         let target = self.ptr.as_ptr().add(offset).cast::<*const u8>();
         target.write(ptr);
+    }
+
+    /// Writes a bound to the VmContext (used by tables).
+    unsafe fn write_bound_at(&mut self, bound: usize, offset: usize) {
+        let target = self.ptr.as_ptr().add(offset).cast::<u32>();
+        target.write(bound as u32);
     }
 }
 

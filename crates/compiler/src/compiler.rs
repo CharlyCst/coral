@@ -184,6 +184,9 @@ impl Compiler for X86_64Compiler {
         for (heap_idx, names) in heaps_names.iter() {
             mod_info.export_heap(heap_idx, names);
         }
+        for (table_idx, names) in tables_names.iter() {
+            mod_info.export_table(table_idx, names);
+        }
         for (glob_idx, names) in globs_names.iter() {
             mod_info.export_glob(glob_idx, names);
         }

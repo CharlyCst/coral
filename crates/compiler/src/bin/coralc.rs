@@ -48,7 +48,7 @@ fn main() {
     // Great, now let's try to call that function by hand
     unsafe {
         let fun = "main";
-        let fun_ptr = instance.get_func_addr_from_name(fun).unwrap();
+        let fun_ptr = instance.get_func_addr_by_name(fun).unwrap();
         println!("Fun addr: {:p}", fun_ptr);
 
         let a: u32 = 2;

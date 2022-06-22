@@ -104,7 +104,7 @@ impl ModuleInfo {
         }
     }
 
-    /// Mark a function as exported under the given list of names.
+    /// Marks a function as exported under the given list of names.
     pub fn export_func(&mut self, func_idx: FuncIndex, exported_names: &[String]) {
         for exported_name in exported_names {
             self.exported_items
@@ -112,6 +112,7 @@ impl ModuleInfo {
         }
     }
 
+    /// Marks a heap as exported under the given list of names.
     pub fn export_heap(&mut self, heap_idx: HeapIndex, exported_names: &[String]) {
         for exported_name in exported_names {
             self.exported_items
@@ -119,6 +120,15 @@ impl ModuleInfo {
         }
     }
 
+    /// Marks a table exported under the given list of names.
+    pub fn export_table(&mut self, table_idx: TableIndex, exported_names: &[String]) {
+        for exported_name in exported_names {
+            self.exported_items
+                .insert((*exported_name).to_string(), ItemRef::Table(table_idx));
+        }
+    }
+
+    /// Marks a global exported under the given list of names.
     pub fn export_glob(&mut self, glob_idx: GlobIndex, exported_names: &[String]) {
         for exported_name in exported_names {
             self.exported_items
@@ -156,6 +166,7 @@ impl WasmModule {
 
         for (func_idx, func) in info.funcs.iter() {
             if func.is_imported() {
+                // TODO: shouldn't it be `is_exported`?
                 funcs.push(func_idx);
             }
         }

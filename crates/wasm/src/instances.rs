@@ -18,9 +18,10 @@ use collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
 enum Item<'a, Area: MemoryArea> {
     Func(&'a Func),
     Heap(&'a Heap<Area>),
+    Table(&'a Table),
 }
 
-enum Heap<Area: MemoryArea> {
+enum Heap<Area> {
     Owned { memory: Area },
     Imported { from: ImportIndex, index: HeapIndex },
 }
@@ -58,7 +59,7 @@ enum Glob {
     Imported { from: ImportIndex, index: GlobIndex },
 }
 
-pub struct Instance<Area: MemoryArea> {
+pub struct Instance<Area> {
     /// A map of all exported symbols.
     items: HashMap<String, ItemRef>,
 
@@ -154,9 +155,6 @@ impl<Area: MemoryArea> Instance<Area> {
                 })
             }
         })?;
-
-        let items = module.public_items().clone();
-
         // Allocate heaps
         let heaps = module.heaps().try_map(|heap_info| match heap_info {
             HeapInfo::Owned { min_size, kind } => {
@@ -211,6 +209,8 @@ impl<Area: MemoryArea> Instance<Area> {
             }
         })?;
 
+        let items = module.public_items().clone();
+
         // Allocate code
         let mod_code = module.code();
         let mut code = alloc
@@ -241,9 +241,9 @@ impl<Area: MemoryArea> Instance<Area> {
     }
 
     /// Returns the address of a function exported by the instance.
-    pub fn get_func_addr_from_name<'a, 'b>(&'a self, name: &'b str) -> Option<*const u8> {
+    pub fn get_func_addr_by_name<'a, 'b>(&'a self, name: &'b str) -> Option<*const u8> {
         let name = self.items.get(name)?;
-        let func = self.get_func(*name)?;
+        let func = self.get_func_by_ref(*name)?;
 
         match func {
             Func::Owned { offset } => {
@@ -256,6 +256,15 @@ impl<Area: MemoryArea> Instance<Area> {
             Func::Imported { from, index: func } => todo!(),
             Func::Native { ptr } => Some(ptr.as_ptr()),
         }
+    }
+
+    /// Returns a table exported by the instance from it's exported name.
+    pub fn get_table_by_name<'a, 'b>(&'a self, name: &'b str) -> Option<&Box<[*const u8]>> {
+        let index = match self.items.get(name)? {
+            ItemRef::Table(idx) => *idx,
+            _ => return None,
+        };
+        Some(self.get_table(index))
     }
 
     pub fn get_vmctx_ptr(&self) -> *const u8 {
@@ -324,16 +333,26 @@ impl<Area: MemoryArea> Instance<Area> {
         }
     }
 
-    /// Returns the address of a table.
+    /// Returns a table.
     /// Imported tables are resolved through recursive lookups.
-    fn get_table_ptr(&self, table: TableIndex) -> *const u8 {
+    fn get_table(&self, table: TableIndex) -> &Box<[*const u8]> {
         match &self.tables[table] {
-            Table::Owned(table) => table.as_ptr() as *const u8,
+            Table::Owned(table) => table,
             Table::Imported { from, index } => {
                 let instance = &self.imports[*from];
-                instance.get_table_ptr(*index)
+                instance.get_table(*index)
             }
         }
+    }
+
+    /// Returns the address of a table.
+    /// Imported tables are resolved through recursive lookups.
+    ///
+    /// TODO: for now we only support static bounds, i.e. tables can't be resized. Ideally, the
+    /// bound should be a pointer to the location to which the bound is actually stored.
+    fn get_table_ptr_and_bound(&self, table: TableIndex) -> (*const u8, usize) {
+        let table = self.get_table(table);
+        (table.as_ptr() as *const u8, table.len())
     }
 
     /// Returns the address of a global.
@@ -357,8 +376,8 @@ impl<Area: MemoryArea> Instance<Area> {
             self.vmctx.set_heap(ptr, idx);
         }
         for idx in self.tables.keys() {
-            let ptr = self.get_table_ptr(idx);
-            self.vmctx.set_table(ptr, idx);
+            let (ptr, bound) = self.get_table_ptr_and_bound(idx);
+            self.vmctx.set_table(ptr, bound, idx);
         }
         for idx in self.funcs.keys() {
             let ptr = self.get_func_ptr(idx);
@@ -376,18 +395,28 @@ impl<Area: MemoryArea> Instance<Area> {
         }
     }
 
-    fn get_func(&self, item: ItemRef) -> Option<&Func> {
-        match self.get_item(item) {
+    /// Returns a function corresponding to the item reference, if that item is a function.
+    fn get_func_by_ref(&self, item: ItemRef) -> Option<&Func> {
+        match self.get_item_by_ref(item) {
             Item::Func(func) => Some(func),
             _ => None,
         }
     }
 
-    fn get_item(&self, item: ItemRef) -> Item<'_, Area> {
+    /// Returns a table corresponding to the item reference, if that item is a table.
+    fn get_table_by_ref(&self, item: ItemRef) -> Option<&Table> {
+        match self.get_item_by_ref(item) {
+            Item::Table(table) => Some(table),
+            _ => None,
+        }
+    }
+
+    /// Returns the item corresponding to the provided reference.
+    fn get_item_by_ref(&self, item: ItemRef) -> Item<'_, Area> {
         match item {
             ItemRef::Func(idx) => Item::Func(&self.funcs[idx]),
             ItemRef::Heap(idx) => Item::Heap(&self.heaps[idx]),
-            ItemRef::Table(idx) => todo!(),
+            ItemRef::Table(idx) => Item::Table(&self.tables[idx]),
             ItemRef::Glob(idx) => todo!(),
             ItemRef::Import(idx) => todo!(),
         }

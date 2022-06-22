@@ -9,7 +9,7 @@ use crate::alloc::string::String;
 use crate::compiler;
 use crate::compiler::Compiler;
 use crate::userspace_alloc::{LibcAllocator, MMapArea};
-use wasm::{Instance, Module, NativeModuleBuilder, RawFuncPtr, WasmModule};
+use wasm::{Instance, MemoryArea, Module, NativeModuleBuilder, RawFuncPtr, WasmModule};
 
 #[test]
 fn the_answer() {
@@ -100,7 +100,7 @@ fn import_memory() {
     "#,
     );
     let answer = execute_0_deps(module, vec![("answer", imported_module)]);
-    assert_eq!(answer, 42);
+    assert_eq!(answer.return_value, 42);
 }
 
 // // The Wasm proposal for multi memory is not yet standardized (phase 3 out of 5 at the time of
@@ -175,7 +175,7 @@ fn import() {
     "#,
     );
     let answer = execute_0_deps(module, vec![("answer", imported_module)]);
-    assert_eq!(answer, 42);
+    assert_eq!(answer.return_value, 42);
 }
 
 #[test]
@@ -205,7 +205,7 @@ fn import_native_func() {
             .build()
     };
     let answer = execute_0_deps(module, vec![("answer", imported_module)]);
-    assert_eq!(answer, 42);
+    assert_eq!(answer.return_value, 42);
 }
 
 #[test]
@@ -225,9 +225,11 @@ fn import_native_table() {
     );
 
     let table = vec![42 as *const u8, 54 as *const u8];
-    let imported_module = NativeModuleBuilder::new().add_table(String::from("table"), table).build();
+    let imported_module = NativeModuleBuilder::new()
+        .add_table(String::from("table"), table)
+        .build();
     let answer = execute_0_deps(module, vec![("native_mod", imported_module)]);
-    assert_eq!(answer, 42);
+    assert_eq!(answer.return_value, 42);
 }
 
 #[test]
@@ -243,23 +245,28 @@ fn table_get_set() {
                 i32.const 1
                 i32.const 0
                 table.get $table
-                ;; i32.const 0
-                ;; i32.const 1
-                ;; table.get $table
-                ;; table.set $table
+                i32.const 0
+                i32.const 1
+                table.get $table
+                table.set $table
                 table.set $table
 
                 i32.const 42
             )
             (export "main" (func $main))
+            (export "table" (table $table))
         )
         "#,
     );
 
-    let table = vec![42 as *const u8, 54 as *const u8];
-    let imported_module = NativeModuleBuilder::new().add_table(String::from("table"), table).build();
+    let table = vec![0x42 as *const u8, 0x54 as *const u8];
+    let imported_module = NativeModuleBuilder::new()
+        .add_table(String::from("table"), table)
+        .build();
     let answer = execute_0_deps(module, vec![("native_mod", imported_module)]);
-    assert_eq!(answer, 42);
+    assert_eq!(answer.return_value, 42);
+    let table = answer.instance.get_table_by_name("table");
+    assert_eq!(table, Some(&vec![0x54 as *const u8, 0x42 as *const u8].into_boxed_slice()));
 }
 
 #[test]
@@ -299,7 +306,7 @@ fn context_switch() {
     "#,
     );
     let answer = execute_0_deps(module, vec![("mod", imported_module)]);
-    assert_eq!(answer, 42);
+    assert_eq!(answer.return_value, 42);
 }
 
 #[test]
@@ -370,7 +377,7 @@ fn import_global() {
     "#,
     );
     let answer = execute_0_deps(module, vec![("answer", imported_module)]);
-    assert_eq!(answer, 42);
+    assert_eq!(answer.return_value, 42);
 }
 
 #[test]
@@ -399,6 +406,11 @@ fn the_answer_rust() {
 
 // ———————————————————————————— Helper Functions ———————————————————————————— //
 
+struct ExecutionResult<Area> {
+    instance: Instance<Area>,
+    return_value: i32,
+}
+
 fn compile(wat: &str) -> WasmModule {
     let bytecode = wat::parse_str(wat).unwrap();
     let mut comp = compiler::X86_64Compiler::new();
@@ -409,23 +421,8 @@ fn compile(wat: &str) -> WasmModule {
 /// Execute a module, with no arguments passed to the main function.
 fn execute_0(module: impl Module) -> i32 {
     let alloc = LibcAllocator::new();
-
-    let instance = Instance::instantiate(&module, vec![], &alloc).unwrap();
-
-    unsafe {
-        let fun = "main";
-        let fun_ptr = instance.get_func_addr_from_name(fun).unwrap();
-
-        let vmctx = instance.get_vmctx_ptr();
-        let result: i32;
-        asm!(
-            "call {entry_point}",
-            entry_point = in(reg) fun_ptr,
-            in("rdi") vmctx,
-            out("rax") result,
-        );
-        result
-    }
+    let mut instance = Instance::instantiate(&module, vec![], &alloc).unwrap();
+    call_0(&mut instance)
 }
 
 /// Execute a module, with 2 arguments passed to the main function.
@@ -436,7 +433,7 @@ fn execute_2(module: impl Module, arg1: i32, arg2: i32) -> i32 {
 
     unsafe {
         let fun = "main";
-        let fun_ptr = instance.get_func_addr_from_name(fun).unwrap();
+        let fun_ptr = instance.get_func_addr_by_name(fun).unwrap();
 
         let vmctx = instance.get_vmctx_ptr();
         let result: i32;
@@ -453,7 +450,10 @@ fn execute_2(module: impl Module, arg1: i32, arg2: i32) -> i32 {
 }
 
 /// Execute a module with dependencies, but with 0 arguments passed to the main function.
-fn execute_0_deps(module: impl Module, dependencies: Vec<(&str, impl Module)>) -> i32 {
+fn execute_0_deps(
+    module: impl Module,
+    dependencies: Vec<(&str, impl Module)>,
+) -> ExecutionResult<impl MemoryArea> {
     let alloc = LibcAllocator::new();
 
     let dependencies = dependencies
@@ -465,11 +465,20 @@ fn execute_0_deps(module: impl Module, dependencies: Vec<(&str, impl Module)>) -
             )
         })
         .collect::<Vec<(&str, Instance<MMapArea>)>>();
-    let instance = Instance::instantiate(&module, dependencies, &alloc).unwrap();
+    let mut instance = Instance::instantiate(&module, dependencies, &alloc).unwrap();
 
+    ExecutionResult {
+        return_value: call_0(&mut instance),
+        instance,
+    }
+}
+
+/// Call the function "main" of an instance with 0 arguments, and return an i32 corresponding to
+/// the value in rax (the return register).
+fn call_0(instance: &mut Instance<impl MemoryArea>) -> i32 {
     unsafe {
         let fun = "main";
-        let fun_ptr = instance.get_func_addr_from_name(fun).unwrap();
+        let fun_ptr = instance.get_func_addr_by_name(fun).unwrap();
 
         let vmctx = instance.get_vmctx_ptr();
         let result: i32;
