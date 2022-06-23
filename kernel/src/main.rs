@@ -6,13 +6,13 @@
 use bootloader::{entry_point, BootInfo};
 use core::arch::asm;
 use core::panic::PanicInfo;
-use wasm::{Compiler, Instance};
+use wasm::Instance;
 
-use compiler::X86_64Compiler;
+use compiler::{Compiler, X86_64Compiler};
 use kernel::kprintln;
 
 /// The first user program to run, expected to boostrap userspace.
-const WASM_USERBOOT: &'static [u8; 169] = std::include_bytes!("../wasm/userboot.wasm");
+const WASM_USERBOOT: &'static [u8; 228] = std::include_bytes!("../wasm/userboot.wasm");
 
 entry_point!(kernel_main);
 

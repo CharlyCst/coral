@@ -6,7 +6,7 @@ extern crate alloc;
 mod compiler;
 mod env;
 
-pub use compiler::X86_64Compiler;
+pub use compiler::{X86_64Compiler, Compiler};
 
 #[cfg(test)]
 mod tests;

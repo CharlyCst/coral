@@ -151,6 +151,10 @@ impl RawFuncPtr {
     }
 }
 
+pub trait ExternRef64: Copy {
+    fn to_u64(self) -> u64;
+}
+
 pub enum FuncInfo {
     // TODO: add signatures
     Owned { offset: u32 },
@@ -183,7 +187,7 @@ pub enum TableInfo {
         name: String,
     },
     Native {
-        ptr: Box<[*const u8]>,
+        ptr: Box<[u64]>,
     },
 }
 

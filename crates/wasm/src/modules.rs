@@ -2,8 +2,8 @@ use crate::alloc::string::{String, ToString};
 use crate::alloc::vec::Vec;
 
 use crate::traits::{
-    FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo, ImportIndex, RawFuncPtr, Reloc,
-    TableIndex, TableInfo,
+    ExternRef64, FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo, ImportIndex,
+    RawFuncPtr, Reloc, TableIndex, TableInfo,
 };
 use crate::traits::{ItemRef, Module, VMContextLayout};
 use collections::{FrozenMap, HashMap, PrimaryMap};
@@ -296,7 +296,11 @@ impl NativeModuleBuilder {
     /// Add a native table to the module.
     ///
     /// TODO: add typecheck info (i.e. type of the table elements).
-    pub fn add_table(mut self, name: String, table: Vec<*const u8>) -> Self {
+    pub fn add_table(mut self, name: String, table: Vec<impl ExternRef64>) -> Self {
+        let table = table
+            .iter()
+            .map(|externref| externref.to_u64())
+            .collect::<Vec<u64>>();
         let idx = self.tables.push(TableInfo::Native {
             ptr: table.into_boxed_slice(),
         });

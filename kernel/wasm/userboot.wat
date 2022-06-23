@@ -1,6 +1,9 @@
 (module
-    (import "coral" "print_char" (func $print_char (type $t)))
-    (type $t (func (param i32)))
+    (import "coral" "print_char" (func $print_char (type $print_char_t)))
+    (import "coral" "buffer_write" (func $buffer_write (type $buffer_write_t)))
+    (import "coral" "handles" (table $handles 2 2 externref))
+    (type $print_char_t (func (param i32)))
+    (type $buffer_write_t (func (param externref) (param i64) (param i64) (param i64)))
     (func $init (result i32)
         ;; Print greeting message
         i32.const 0x48 ;; H
@@ -47,6 +50,14 @@
         call $print_char
         i32.const 0x0A ;; \n
         call $print_char
+
+        ;; Call buffer_write
+        i32.const 0
+        table.get $handles
+        i64.const 0
+        i64.const 0
+        i64.const 1
+        call $buffer_write
 
         ;; Return value
         i32.const 42

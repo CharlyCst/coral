@@ -41,7 +41,7 @@ impl<Area: MemoryArea> Heap<Area> {
 enum Table {
     // Note: for now we use boxed slices, so that we don't have to handle table relocation (but we
     // only support fixed size tables then...)
-    Owned(Box<[*const u8]>),
+    Owned(Box<[u64]>),
     Imported {
         from: ImportIndex,
         index: TableIndex,
@@ -188,7 +188,7 @@ impl<Area: MemoryArea> Instance<Area> {
                 } else {
                     *min_size
                 } as usize;
-                let table = alloc::vec![0 as *const u8; table_size].into_boxed_slice();
+                let table = alloc::vec![0u64; table_size].into_boxed_slice();
                 Ok(Table::Owned(table))
             }
             crate::TableInfo::Native { ptr } => Ok(Table::Owned(ptr.clone())),
@@ -259,7 +259,7 @@ impl<Area: MemoryArea> Instance<Area> {
     }
 
     /// Returns a table exported by the instance from it's exported name.
-    pub fn get_table_by_name<'a, 'b>(&'a self, name: &'b str) -> Option<&Box<[*const u8]>> {
+    pub fn get_table_by_name<'a, 'b>(&'a self, name: &'b str) -> Option<&Box<[u64]>> {
         let index = match self.items.get(name)? {
             ItemRef::Table(idx) => *idx,
             _ => return None,
@@ -335,7 +335,7 @@ impl<Area: MemoryArea> Instance<Area> {
 
     /// Returns a table.
     /// Imported tables are resolved through recursive lookups.
-    fn get_table(&self, table: TableIndex) -> &Box<[*const u8]> {
+    fn get_table(&self, table: TableIndex) -> &Box<[u64]> {
         match &self.tables[table] {
             Table::Owned(table) => table,
             Table::Imported { from, index } => {
