@@ -1,3 +1,4 @@
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::arch::asm;
@@ -9,7 +10,19 @@ use crate::alloc::string::String;
 use crate::compiler;
 use crate::compiler::Compiler;
 use crate::userspace_alloc::{LibcAllocator, MMapArea};
-use wasm::{Instance, MemoryArea, Module, NativeModuleBuilder, RawFuncPtr, WasmModule};
+use wasm::{
+    ExternRef64, Instance, MemoryArea, Module, NativeModuleBuilder, RawFuncPtr, WasmModule,
+};
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+struct ExternRef(*const u8);
+
+impl ExternRef64 for ExternRef {
+    fn to_u64(self) -> u64 {
+        self.0 as u64
+    }
+}
 
 #[test]
 fn the_answer() {
@@ -224,7 +237,9 @@ fn import_native_table() {
         "#,
     );
 
-    let table = vec![42 as *const u8, 54 as *const u8];
+    let ref1 = ExternRef(0x42 as *const u8);
+    let ref2 = ExternRef(0x54 as *const u8);
+    let table = vec![ref1, ref2];
     let imported_module = NativeModuleBuilder::new()
         .add_table(String::from("table"), table)
         .build();
@@ -259,14 +274,16 @@ fn table_get_set() {
         "#,
     );
 
-    let table = vec![0x42 as *const u8, 0x54 as *const u8];
+    let ref1 = ExternRef(0x42 as *const u8);
+    let ref2 = ExternRef(0x54 as *const u8);
+    let table = vec![ref1, ref2];
     let imported_module = NativeModuleBuilder::new()
         .add_table(String::from("table"), table)
         .build();
     let answer = execute_0_deps(module, vec![("native_mod", imported_module)]);
     assert_eq!(answer.return_value, 42);
     let table = answer.instance.get_table_by_name("table");
-    assert_eq!(table, Some(&vec![0x54 as *const u8, 0x42 as *const u8].into_boxed_slice()));
+    assert_eq!(table, Some(&vec![0x54, 0x42].into_boxed_slice()));
 }
 
 #[test]
@@ -464,7 +481,7 @@ fn execute_0_deps(
                 Instance::instantiate(&module, vec![], &alloc).unwrap(),
             )
         })
-        .collect::<Vec<(&str, Instance<MMapArea>)>>();
+        .collect::<Vec<(&str, Instance<Arc<MMapArea>>)>>();
     let mut instance = Instance::instantiate(&module, dependencies, &alloc).unwrap();
 
     ExecutionResult {

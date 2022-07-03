@@ -57,7 +57,7 @@ fn alloc_vma() {
     let mut vma = allocator.with_capacity(0x1500).unwrap(); // one page and a half on x86
 
     // Try to fill the vma
-    for byte in vma.as_bytes_mut() {
+    for byte in vma.unsafe_as_bytes_mut() {
         *byte = 0;
     }
 }

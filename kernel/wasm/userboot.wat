@@ -4,6 +4,7 @@
     (import "coral" "handles" (table $handles 2 2 externref))
     (type $print_char_t (func (param i32)))
     (type $buffer_write_t (func (param externref) (param i64) (param i64) (param i64)))
+    (memory $buffer 1 1)
     (func $init (result i32)
         ;; Print greeting message
         i32.const 0x48 ;; H
@@ -51,16 +52,66 @@
         i32.const 0x0A ;; \n
         call $print_char
 
-        ;; Call buffer_write
-        i32.const 0
-        table.get $handles
-        i64.const 0
-        i64.const 0
-        i64.const 1
-        call $buffer_write
+        ;; Write to buffer
+        i32.const 2     ;; x
+        i32.const 4     ;; y
+        i32.const 0x61  ;; character
+        i32.const 14    ;; color
+        call $write_byte
+        call $flush
 
         ;; Return value
         i32.const 42
+    )
+    (func $write_byte
+        (param $x i32)
+        (param $y i32)
+        (param $char i32)
+        (param $color i32)
+        (local $index i32)
+
+        ;; Compute buffer index: (80 * y + x) * 2
+        i32.const 80
+        local.get $y
+        i32.mul
+        local.get $x
+        i32.add
+        i32.const 2
+        i32.mul
+        local.set $index
+
+        ;; Store character
+        local.get $char
+        local.get $index
+        i32.store8
+
+        ;; Store color
+        local.get $color
+        local.get $index
+        i32.const 1
+        i32.add
+        i32.store8
+    )
+    (func $flush
+        ;; Host buffer handle
+        i32.const 0
+        table.get $handles
+
+        ;; Buffer offset in wasm memory
+        i64.const 0
+
+        ;; Host buffer offset
+        i64.const 0
+
+        ;; Buffer size
+        i64.const 25
+        i64.const 80
+        i64.mul
+        i64.const 2
+        i64.mul
+
+        ;; Syscall
+        call $buffer_write
     )
     (export "init" (func $init))
 )

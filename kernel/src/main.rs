@@ -6,13 +6,16 @@
 use bootloader::{entry_point, BootInfo};
 use core::arch::asm;
 use core::panic::PanicInfo;
-use wasm::Instance;
+use core::ptr::NonNull;
 
 use compiler::{Compiler, X86_64Compiler};
 use kernel::kprintln;
+use kernel::memory::VirtualMemoryArea;
+use kernel::syscalls::KernelObjectIndex;
+use wasm::Instance;
 
 /// The first user program to run, expected to boostrap userspace.
-const WASM_USERBOOT: &'static [u8; 228] = std::include_bytes!("../wasm/userboot.wasm");
+const WASM_USERBOOT: &'static [u8; 306] = std::include_bytes!("../wasm/userboot.wasm");
 
 entry_point!(kernel_main);
 
@@ -24,9 +27,16 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         unsafe { kernel::init_memory(boot_info).expect("Failed to initialize allocator") };
 
     // Initialize the Coral native module
-    let coral_module = kernel::syscalls::build_syscall_module();
+    let vga_buffer = unsafe {
+        VirtualMemoryArea::from_raw(NonNull::new(0xb8000 as *mut u8).unwrap(), 80 * 25 * 2)
+    };
+    let vga_idx = kernel::syscalls::ACTIVE_VMA
+        .insert(vga_buffer)
+        .into_externref();
+    let coral_handles_table = vec![vga_idx];
+    let coral_module = kernel::syscalls::build_syscall_module(coral_handles_table);
     let coral_instance = Instance::instantiate(&coral_module, Vec::new(), &allocator)
-        .expect("Failed to instantiate coral syscalls");
+        .expect("Failed to instantiate coral syscalls module");
 
     // Compile & initialize userboot
     let mut compiler = X86_64Compiler::new();

@@ -14,7 +14,7 @@ use x86_64::structures::paging::{Mapper, OffsetPageTable};
 use x86_64::{PhysAddr, VirtAddr};
 
 use crate::allocator;
-use wasm::{MemoryAeaAllocator, MemoryArea};
+use wasm::{ExclusiveMemoryArea, MemoryAeaAllocator, MemoryArea};
 
 // TODO: Be generic over page sizes.
 const PAGE_SIZE: usize = 0x1000;
@@ -188,9 +188,22 @@ impl VirtualMemoryMap {
 pub struct VirtualMemoryArea {
     ptr: NonNull<u8>,
     nb_pages: usize,
-    vma_allocator: VirtualMemoryAreaAllocator,
+    size: usize,
+    #[allow(unused)]
+    kind: VmaKind,
+    vma_allocator: Option<VirtualMemoryAreaAllocator>,
     marker: PhantomData<u8>,
 }
+
+pub enum VmaKind {
+    /// Satic VMA, for instance a VGA buffer or fixed-size area.
+    Static,
+}
+
+// SAFETY: VMA's operation are thread safe, except writting to the area which must be properly
+// synchronized by the caller (e.g. a Wasm instance).
+unsafe impl Send for VirtualMemoryArea {}
+unsafe impl Sync for VirtualMemoryArea {}
 
 impl VirtualMemoryArea {
     /// Returns the number of pages to add in order to grow by at least `n` bytes.
@@ -203,9 +216,9 @@ impl VirtualMemoryArea {
     ///
     /// WARNING: future accesses to the VMA might cause an exception if the appropriate flags are
     /// not present.
-    fn update_flags(&mut self, flags: PageTableFlags) -> Result<(), ()> {
+    fn update_flags(&self, flags: PageTableFlags) -> Result<(), ()> {
         let mut virt_addr = VirtAddr::from_ptr(self.ptr.as_ptr());
-        let mut allocator = self.vma_allocator.lock();
+        let mut allocator = self.vma_allocator.as_ref().ok_or(())?.lock();
         let mapper = &mut allocator.mapper;
 
         // The assumption is not necessary for correctness here, but should still hold.
@@ -221,22 +234,38 @@ impl VirtualMemoryArea {
 
         Ok(())
     }
+
+    /// Builds a virtual memory from a raw pointer.
+    ///
+    /// SAFETY: The corresponding memory area must be valid for the whole existance of the VMA.
+    /// The VMA should then be considered the owner of that area.
+    pub unsafe fn from_raw(ptr: NonNull<u8>, size: usize) -> Self {
+        let nb_pages = Self::bytes_to_pages(size);
+        Self {
+            ptr,
+            nb_pages,
+            size,
+            kind: VmaKind::Static,
+            vma_allocator: None,
+            marker: PhantomData,
+        }
+    }
 }
 
 impl MemoryArea for VirtualMemoryArea {
-    fn set_executable(&mut self) {
+    fn set_executable(&self) {
         let flags = PageTableFlags::PRESENT;
         self.update_flags(flags)
             .expect("Could not set execute permission");
     }
 
-    fn set_write(&mut self) {
+    fn set_write(&self) {
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
         self.update_flags(flags)
             .expect("Could not set write permission");
     }
 
-    fn set_read_only(&mut self) {
+    fn set_read_only(&self) {
         let flags = PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE;
         self.update_flags(flags)
             .expect("Could not set read-only permission");
@@ -246,7 +275,7 @@ impl MemoryArea for VirtualMemoryArea {
         self.ptr.as_ptr()
     }
 
-    fn as_mut_ptr(&mut self) -> *mut u8 {
+    fn as_mut_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
     }
 
@@ -255,19 +284,36 @@ impl MemoryArea for VirtualMemoryArea {
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.size()) }
     }
 
-    fn as_bytes_mut(&mut self) -> &mut [u8] {
+    unsafe fn unsafe_as_bytes_mut(&self) -> &mut [u8] {
         // SAFETY: We rely on the correctness of `self.size()` and the validity of the pointer.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size()) }
+        // The caller is responsible for ensuring that there is no alisaing &mut references.
+        core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size())
     }
 
     fn size(&self) -> usize {
-        self.nb_pages * PAGE_SIZE
+        self.size
     }
 
-    fn extend_by(&mut self, _n: usize) -> Result<(), ()> {
+    fn extend_by(&self, _n: usize) -> Result<(), ()> {
         todo!()
     }
 }
+
+impl ExclusiveMemoryArea for VirtualMemoryArea {
+    type Shared = Arc<VirtualMemoryArea>;
+
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        // SAFETY: we got a mutable reference to the area, so it's safe to return a mutable slice
+        // of the area.
+        unsafe { self.unsafe_as_bytes_mut() }
+    }
+
+    fn into_shared(self) -> Self::Shared {
+        Arc::new(self)
+    }
+}
+
+// ————————————————————— Virtual Memory Area Allocator —————————————————————— //
 
 /// The Virtual Memory Area Allocator, responsible for allocating and managing virtual memory
 /// areas.
@@ -336,7 +382,9 @@ impl MemoryAeaAllocator for VirtualMemoryAreaAllocator {
         Ok(VirtualMemoryArea {
             ptr,
             nb_pages,
-            vma_allocator: self.clone(),
+            size: capacity,
+            kind: VmaKind::Static, // TODO: We don't support resizing for now.
+            vma_allocator: Some(self.clone()),
             marker: PhantomData,
         })
     }

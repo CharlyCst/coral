@@ -1,8 +1,10 @@
-use crate::alloc::string::String;
-
 use alloc::boxed::Box;
-use collections::{entity_impl, FrozenMap, HashMap};
+use alloc::string::String;
+use alloc::sync::Arc;
+use core::ops::Deref;
 use core::ptr::NonNull;
+
+use collections::{entity_impl, FrozenMap, HashMap};
 
 // ——————————————————————————————— Allocator ———————————————————————————————— //
 
@@ -18,37 +20,41 @@ pub enum HeapKind {
 /// special care must be taken when accessing it as it may throw an exception.
 pub trait MemoryArea {
     /// Disables write and set execute permission.
-    fn set_executable(&mut self);
+    fn set_executable(&self);
 
     /// Disables execute and set write permission.
-    fn set_write(&mut self);
+    fn set_write(&self);
 
     /// Disables execute and write permissions.
-    fn set_read_only(&mut self);
+    fn set_read_only(&self);
 
     /// Returns a pointer to the begining of the area.
     fn as_ptr(&self) -> *const u8;
 
     /// Returns a mutable pointer to the begining of the area.
-    fn as_mut_ptr(&mut self) -> *mut u8;
+    fn as_mut_ptr(&self) -> *mut u8;
 
     /// Returns a view of the area.
     fn as_bytes(&self) -> &[u8];
 
     /// Returns a mutable view of the area.
     ///
-    /// WARNING: The write permission must be set in order to write to the area, an exception will
-    /// be raised otherwise.
-    fn as_bytes_mut(&mut self) -> &mut [u8];
+    /// This functions is expected to be implemented with interior mutability, and therefore can be
+    /// used by multiple instances that share a memory region. The responsibility of
+    /// synchronization is deferred to the caller.
+    ///
+    /// SAFETY: The caller is responsible for ensuring that there is no concurrent access to the
+    /// memory area.
+    unsafe fn unsafe_as_bytes_mut(&self) -> &mut [u8];
 
     /// Returns the size of the area, in bytes.
     fn size(&self) -> usize;
 
     /// Extends the area by at least `n` bytes.
-    fn extend_by(&mut self, n: usize) -> Result<(), ()>;
+    fn extend_by(&self, n: usize) -> Result<(), ()>;
 
     /// Extends the area until it can hold at least `n` bytes.
-    fn extend_to(&mut self, n: usize) -> Result<(), ()> {
+    fn extend_to(&self, n: usize) -> Result<(), ()> {
         let size = self.size();
         if size < n {
             self.extend_by(size - n)
@@ -58,13 +64,77 @@ pub trait MemoryArea {
     }
 }
 
+/// A memory area that is not yet (or no longer) shared.
+pub trait ExclusiveMemoryArea: MemoryArea {
+    type Shared: MemoryArea;
+
+    /// Returns a mutable view of the area.
+    fn as_bytes_mut(&mut self) -> &mut [u8];
+
+    /// Returns a version of the area that can safely be shared.
+    fn into_shared(self) -> Self::Shared;
+}
+
+impl<Area> MemoryArea for Arc<Area>
+where
+    Area: MemoryArea,
+{
+    #[inline]
+    fn set_executable(&self) {
+        self.deref().set_executable()
+    }
+
+    #[inline]
+    fn set_write(&self) {
+        self.deref().set_write()
+    }
+
+    #[inline]
+    fn set_read_only(&self) {
+        self.deref().set_read_only()
+    }
+
+    #[inline]
+    fn as_ptr(&self) -> *const u8 {
+        self.deref().as_ptr()
+    }
+
+    #[inline]
+    fn as_mut_ptr(&self) -> *mut u8 {
+        self.deref().as_mut_ptr()
+    }
+
+    #[inline]
+    fn as_bytes(&self) -> &[u8] {
+        self.deref().as_bytes()
+    }
+
+    #[inline]
+    unsafe fn unsafe_as_bytes_mut(&self) -> &mut [u8] {
+        self.deref().unsafe_as_bytes_mut()
+    }
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.deref().size()
+    }
+
+    #[inline]
+    fn extend_by(&self, n: usize) -> Result<(), ()> {
+        self.deref().extend_by(n)
+    }
+}
+
 /// An allocator that can allocate new memory areas.
 pub trait MemoryAeaAllocator {
-    type Area: MemoryArea;
+    type Area: ExclusiveMemoryArea;
 
     /// Allocates a memory area with read and write permissions and at least `capacity` bytes
     /// availables.
-    fn with_capacity(&self, capacity: usize) -> Result<Self::Area, ()>;
+    fn with_capacity(
+        &self,
+        capacity: usize,
+    ) -> Result<Self::Area, ()>;
 }
 
 // ————————————————————————————————— Module ————————————————————————————————— //
@@ -116,8 +186,8 @@ impl ItemRef {
 
     pub fn as_table(self) -> Option<TableIndex> {
         match self {
-           ItemRef::Table(idx) => Some(idx),
-           _ => None,
+            ItemRef::Table(idx) => Some(idx),
+            _ => None,
         }
     }
 

@@ -6,8 +6,8 @@ use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
 
 use crate::traits::{
-    FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind, ImportIndex, ItemRef,
-    RawFuncPtr, RelocKind, TableIndex,
+    ExclusiveMemoryArea, FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind,
+    ImportIndex, ItemRef, RawFuncPtr, RelocKind, TableIndex,
 };
 use crate::traits::{
     GlobIndex, MemoryAeaAllocator, MemoryArea, Module, ModuleError, ModuleResult, VMContextLayout,
@@ -27,14 +27,23 @@ enum Heap<Area> {
 }
 
 impl<Area: MemoryArea> Heap<Area> {
-    /// Create a new heap with the given capacity, in number of pages.
-    pub fn with_capacity(capacity: u32, kind: HeapKind, mut area: Area) -> Self {
-        area.extend_to(capacity as usize);
+    /// Initializes a new heap with the given capacity, in number of pages.
+    pub fn with_capacity<ExclArea>(
+        capacity: u32,
+        kind: HeapKind,
+        mut area: ExclArea,
+    ) -> Result<Self, ()>
+    where
+        ExclArea: ExclusiveMemoryArea<Shared = Area>,
+    {
+        area.extend_to(capacity as usize)?;
         // Zero-out the area
         for byte in area.as_bytes_mut().iter_mut() {
             *byte = 0;
         }
-        Self::Owned { memory: area }
+        Ok(Self::Owned {
+            memory: area.into_shared(),
+        })
     }
 }
 
@@ -89,11 +98,15 @@ pub struct Instance<Area> {
 
 impl<Area: MemoryArea> Instance<Area> {
     /// Creates an instance from a module.
-    pub fn instantiate<Mod: Module>(
+    pub fn instantiate<Mod, ExclArea>(
         module: &Mod,
         import_from: Vec<(&str, Instance<Area>)>,
-        alloc: &impl MemoryAeaAllocator<Area = Area>,
-    ) -> ModuleResult<Self> {
+        alloc: &impl MemoryAeaAllocator<Area = ExclArea>,
+    ) -> ModuleResult<Self>
+    where
+        Mod: Module,
+        ExclArea: ExclusiveMemoryArea<Shared = Area>,
+    {
         let mut import_from = import_from
             .into_iter()
             .map(|x| Some(x))
@@ -161,7 +174,9 @@ impl<Area: MemoryArea> Instance<Area> {
                 let area = alloc
                     .with_capacity(*min_size as usize)
                     .map_err(|_| ModuleError::FailedToInstantiate)?;
-                Ok(Heap::with_capacity(*min_size, *kind, area))
+                let heap = Heap::with_capacity(*min_size, *kind, area)
+                    .map_err(|_| ModuleError::FailedToInstantiate)?;
+                Ok(heap)
             }
             HeapInfo::Imported { module, name } => {
                 // Look for the corresponding module
@@ -217,6 +232,7 @@ impl<Area: MemoryArea> Instance<Area> {
             .with_capacity(mod_code.len())
             .map_err(|_| ModuleError::FailedToInstantiate)?;
         code.as_bytes_mut()[..mod_code.len()].copy_from_slice(mod_code);
+        let code = code.into_shared();
 
         // Create instance
         let mut instance = Self {
@@ -281,7 +297,11 @@ impl<Area: MemoryArea> Instance<Area> {
             let value = base + reloc.addend;
 
             let offset = reloc.offset as usize;
-            let code = self.code.as_bytes_mut();
+            // SAFETY: This function is private and called just after instance initialization,
+            // therefore we know that we are the sole owner of `self.code` at this point.
+            //
+            // TODO: refactor the code to remove need for unsafe?
+            let code = unsafe { self.code.unsafe_as_bytes_mut() };
             match reloc.kind {
                 RelocKind::Abs4 => todo!(),
                 RelocKind::Abs8 => {
