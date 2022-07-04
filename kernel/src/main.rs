@@ -11,7 +11,7 @@ use core::ptr::NonNull;
 use compiler::{Compiler, X86_64Compiler};
 use kernel::kprintln;
 use kernel::memory::VirtualMemoryArea;
-use kernel::syscalls::KernelObjectIndex;
+use kernel::syscalls::KoIndex;
 use wasm::Instance;
 
 /// The first user program to run, expected to boostrap userspace.
