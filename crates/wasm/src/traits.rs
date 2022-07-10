@@ -65,6 +65,8 @@ pub trait MemoryArea {
 }
 
 /// A memory area that is not yet (or no longer) shared.
+///
+/// TODO: do we still need this? `Instance` don't require it anymore.
 pub trait ExclusiveMemoryArea: MemoryArea {
     type Shared: MemoryArea;
 
@@ -126,15 +128,14 @@ where
 }
 
 /// An allocator that can allocate new memory areas.
+///
+/// TODO: do we need this trait? Instance doesn't require it anymore.
 pub trait MemoryAeaAllocator {
     type Area: ExclusiveMemoryArea;
 
     /// Allocates a memory area with read and write permissions and at least `capacity` bytes
     /// availables.
-    fn with_capacity(
-        &self,
-        capacity: usize,
-    ) -> Result<Self::Area, ()>;
+    fn with_capacity(&self, capacity: usize) -> Result<Self::Area, ()>;
 }
 
 // ————————————————————————————————— Module ————————————————————————————————— //
@@ -323,10 +324,12 @@ pub struct Reloc {
 #[derive(Debug)]
 pub enum ModuleError {
     FailedToInstantiate,
+    RuntimeError,
 }
 
 pub type ModuleResult<T> = Result<T, ModuleError>;
 
+/// A module that can be instantiated.
 pub trait Module {
     type VMContext: VMContextLayout + Clone + 'static;
 
@@ -339,4 +342,36 @@ pub trait Module {
     fn relocs(&self) -> &[Reloc];
     fn public_items(&self) -> &HashMap<String, ItemRef>;
     fn vmctx_layout(&self) -> &Self::VMContext;
+}
+
+// ———————————————————————————————— Runtime ————————————————————————————————— //
+
+/// A WebAssembly runtime.
+///
+/// SAFETY: This trait is marked as unsafe because:
+/// - the `alloc_code` method which might cause arbitrary code execution if the runtime modifies
+/// the code area once the code has been written.
+/// - The `alloc_heap` method might cause arbitrary code execution within the instance in case of
+/// improper initialization (i.e. in most case memory must be zeroed), which might result in
+/// arbitrary bad things depending on the instance's capabilities.
+pub unsafe trait Runtime {
+    type MemoryArea;
+
+    /// Allocates a heap.
+    ///
+    /// SAFETY: Initial memory must always be initialized to 0. It is possible to initialize memory
+    /// to another value tough, but this value **must** be valid for the corresponding instance.
+    /// An example of non-zero memory initialization is resuming execution from a memory snapshot.
+    fn alloc_heap(&self, min_size: u32, kind: HeapKind) -> Result<Self::MemoryArea, ModuleError>;
+
+    /// Allocates a table.
+    fn alloc_table(&self, min_size: u32, max_size: Option<u32>) -> Result<Box<[u64]>, ModuleError>;
+
+    /// Allocates a code area.
+    ///
+    /// SAFETY: This function is the reason why the `Runtime` trait is marked as unsafe: the
+    /// runtime **must not** modify the code area once the code has been written.
+    fn alloc_code<F>(&self, size: usize, write_code: F) -> Result<Self::MemoryArea, ModuleError>
+    where
+        F: FnOnce(&mut [u8]) -> Result<(), ModuleError>;
 }

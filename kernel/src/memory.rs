@@ -235,6 +235,12 @@ impl VirtualMemoryArea {
         Ok(())
     }
 
+    /// Fill the area with zero.
+    pub fn zeroed(&mut self) {
+        let area = self.as_bytes_mut();
+        area.fill(0);
+    }
+
     /// Builds a virtual memory from a raw pointer.
     ///
     /// SAFETY: The corresponding memory area must be valid for the whole existance of the VMA.
@@ -260,7 +266,7 @@ impl MemoryArea for VirtualMemoryArea {
     }
 
     fn set_write(&self) {
-        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
         self.update_flags(flags)
             .expect("Could not set write permission");
     }

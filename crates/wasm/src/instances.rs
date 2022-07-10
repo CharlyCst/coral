@@ -1,19 +1,14 @@
-#![allow(unused)]
-
-use crate::alloc::borrow::ToOwned;
 use crate::alloc::boxed::Box;
 use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
 
 use crate::traits::{
-    ExclusiveMemoryArea, FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind,
-    ImportIndex, ItemRef, RawFuncPtr, RelocKind, TableIndex,
+    FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, ImportIndex, ItemRef, RawFuncPtr,
+    RelocKind, TableIndex,
 };
-use crate::traits::{
-    GlobIndex, MemoryAeaAllocator, MemoryArea, Module, ModuleError, ModuleResult, VMContextLayout,
-};
+use crate::traits::{GlobIndex, MemoryArea, Module, ModuleError, ModuleResult, Reloc, Runtime};
 use crate::vmctx::VMContext;
-use collections::{EntityRef, FrozenMap, HashMap, PrimaryMap};
+use collections::{FrozenMap, HashMap};
 
 enum Item<'a, Area: MemoryArea> {
     Func(&'a Func),
@@ -24,27 +19,6 @@ enum Item<'a, Area: MemoryArea> {
 enum Heap<Area> {
     Owned { memory: Area },
     Imported { from: ImportIndex, index: HeapIndex },
-}
-
-impl<Area: MemoryArea> Heap<Area> {
-    /// Initializes a new heap with the given capacity, in number of pages.
-    pub fn with_capacity<ExclArea>(
-        capacity: u32,
-        kind: HeapKind,
-        mut area: ExclArea,
-    ) -> Result<Self, ()>
-    where
-        ExclArea: ExclusiveMemoryArea<Shared = Area>,
-    {
-        area.extend_to(capacity as usize)?;
-        // Zero-out the area
-        for byte in area.as_bytes_mut().iter_mut() {
-            *byte = 0;
-        }
-        Ok(Self::Owned {
-            memory: area.into_shared(),
-        })
-    }
 }
 
 enum Table {
@@ -98,14 +72,13 @@ pub struct Instance<Area> {
 
 impl<Area: MemoryArea> Instance<Area> {
     /// Creates an instance from a module.
-    pub fn instantiate<Mod, ExclArea>(
+    pub fn instantiate<Mod>(
         module: &Mod,
         import_from: Vec<(&str, Instance<Area>)>,
-        alloc: &impl MemoryAeaAllocator<Area = ExclArea>,
+        runtime: &impl Runtime<MemoryArea = Area>,
     ) -> ModuleResult<Self>
     where
         Mod: Module,
-        ExclArea: ExclusiveMemoryArea<Shared = Area>,
     {
         let mut import_from = import_from
             .into_iter()
@@ -114,7 +87,7 @@ impl<Area: MemoryArea> Instance<Area> {
         let imports = module.imports().try_map(|module| {
             // Pick the first matching module
             for item in import_from.iter_mut() {
-                if let Some((item_name, instance)) = item {
+                if let Some((item_name, _)) = item {
                     if item_name == module {
                         let (_, instance) = item.take().unwrap();
                         return Ok(instance);
@@ -171,11 +144,8 @@ impl<Area: MemoryArea> Instance<Area> {
         // Allocate heaps
         let heaps = module.heaps().try_map(|heap_info| match heap_info {
             HeapInfo::Owned { min_size, kind } => {
-                let area = alloc
-                    .with_capacity(*min_size as usize)
-                    .map_err(|_| ModuleError::FailedToInstantiate)?;
-                let heap = Heap::with_capacity(*min_size, *kind, area)
-                    .map_err(|_| ModuleError::FailedToInstantiate)?;
+                let area = runtime.alloc_heap(*min_size, *kind)?;
+                let heap = Heap::Owned { memory: area };
                 Ok(heap)
             }
             HeapInfo::Imported { module, name } => {
@@ -198,12 +168,7 @@ impl<Area: MemoryArea> Instance<Area> {
         // Allocate tables
         let tables = module.tables().try_map(|table_info| match table_info {
             crate::TableInfo::Owned { min_size, max_size } => {
-                let table_size = if let Some(max_size) = max_size {
-                    *max_size
-                } else {
-                    *min_size
-                } as usize;
-                let table = alloc::vec![0u64; table_size].into_boxed_slice();
+                let table = runtime.alloc_table(*min_size, *max_size)?;
                 Ok(Table::Owned(table))
             }
             crate::TableInfo::Native { ptr } => Ok(Table::Owned(ptr.clone())),
@@ -228,11 +193,21 @@ impl<Area: MemoryArea> Instance<Area> {
 
         // Allocate code
         let mod_code = module.code();
-        let mut code = alloc
-            .with_capacity(mod_code.len())
-            .map_err(|_| ModuleError::FailedToInstantiate)?;
-        code.as_bytes_mut()[..mod_code.len()].copy_from_slice(mod_code);
-        let code = code.into_shared();
+        let relocs = module.relocs();
+        let mut relocated = false;
+        let relocate = |code: &mut [u8]| {
+            if code.len() < mod_code.len() {
+                return Err(ModuleError::FailedToInstantiate);
+            }
+            relocated = true;
+            code[..mod_code.len()].copy_from_slice(mod_code);
+            Self::relocate(code, relocs, &funcs, &imports)
+        };
+        let code = runtime.alloc_code(module.code().len(), relocate)?;
+        if !relocated {
+            // The runtime didn't properly relocate the code by calling the closure.
+            return Err(ModuleError::RuntimeError);
+        }
 
         // Create instance
         let mut instance = Self {
@@ -245,10 +220,6 @@ impl<Area: MemoryArea> Instance<Area> {
             funcs,
             code,
         };
-
-        // Relocate & set code execute-only
-        instance.relocate(module)?;
-        instance.code.set_executable();
 
         // Set the VMContext to its expected initial values
         instance.init_vmctx();
@@ -269,7 +240,7 @@ impl<Area: MemoryArea> Instance<Area> {
                 // less or equal to `code.len()` and points to the start of the intended function.
                 unsafe { Some(addr.offset(*offset as isize)) }
             }
-            Func::Imported { from, index: func } => todo!(),
+            Func::Imported { .. } => todo!(),
             Func::Native { ptr } => Some(ptr.as_ptr()),
         }
     }
@@ -287,21 +258,28 @@ impl<Area: MemoryArea> Instance<Area> {
         self.vmctx.as_ptr()
     }
 
-    fn relocate(&mut self, module: &impl Module) -> ModuleResult<()> {
-        for reloc in module.relocs() {
+    fn relocate(
+        code: &mut [u8],
+        relocs: &[Reloc],
+        funcs: &FrozenMap<FuncIndex, Func>,
+        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+    ) -> ModuleResult<()> {
+        for reloc in relocs {
             let base = match reloc.item {
-                ItemRef::Func(func) => self.get_func_ptr(func) as i64,
+                ItemRef::Func(func) => match &funcs[func] {
+                    Func::Owned { offset } => code.as_ptr().wrapping_add(*offset as usize),
+                    Func::Imported { from, index } => {
+                        let instance = &imports[*from];
+                        instance.get_func_ptr(*index)
+                    }
+                    Func::Native { ptr } => ptr.as_ptr(),
+                },
                 // Only functions are supported by relocations
                 _ => return Err(ModuleError::FailedToInstantiate),
-            };
+            } as i64;
             let value = base + reloc.addend;
 
             let offset = reloc.offset as usize;
-            // SAFETY: This function is private and called just after instance initialization,
-            // therefore we know that we are the sole owner of `self.code` at this point.
-            //
-            // TODO: refactor the code to remove need for unsafe?
-            let code = unsafe { self.code.unsafe_as_bytes_mut() };
             match reloc.kind {
                 RelocKind::Abs4 => todo!(),
                 RelocKind::Abs8 => {
@@ -423,22 +401,14 @@ impl<Area: MemoryArea> Instance<Area> {
         }
     }
 
-    /// Returns a table corresponding to the item reference, if that item is a table.
-    fn get_table_by_ref(&self, item: ItemRef) -> Option<&Table> {
-        match self.get_item_by_ref(item) {
-            Item::Table(table) => Some(table),
-            _ => None,
-        }
-    }
-
     /// Returns the item corresponding to the provided reference.
     fn get_item_by_ref(&self, item: ItemRef) -> Item<'_, Area> {
         match item {
             ItemRef::Func(idx) => Item::Func(&self.funcs[idx]),
             ItemRef::Heap(idx) => Item::Heap(&self.heaps[idx]),
             ItemRef::Table(idx) => Item::Table(&self.tables[idx]),
-            ItemRef::Glob(idx) => todo!(),
-            ItemRef::Import(idx) => todo!(),
+            ItemRef::Glob(_) => todo!(),
+            ItemRef::Import(_) => todo!(),
         }
     }
 }

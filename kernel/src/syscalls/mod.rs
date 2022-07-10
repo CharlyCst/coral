@@ -4,13 +4,11 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::mem;
 
+use crate::runtime::{VmaIndex, ACTIVE_VMA};
 use crate::{kprint, kprintln};
-use wasm::{MemoryArea, NativeModule, NativeModuleBuilder, RawFuncPtr};
-
-mod kernel_objects;
-
-pub use kernel_objects::{ExternRef, VmaIndex, ACTIVE_VMA, KoIndex};
+use wasm::{ExternRef64, MemoryArea, NativeModule, NativeModuleBuilder, RawFuncPtr};
 
 // ————————————————————————————— Native Module —————————————————————————————— //
 
@@ -42,6 +40,30 @@ type WasmU32 = u32;
 /// A WebAssembly u64.
 type WasmU64 = u64;
 
+/// A WebAssembly externref.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy)]
+pub enum ExternRef {
+    /// An invalid handle.
+    Invalid,
+    /// A virtual memory area.
+    Vma(VmaIndex),
+}
+
+/// This value is used to assert a compile time that ExternRef is 8 bytes long.
+#[doc(hidden)]
+const _EXTERNREF_SIZE_ASSERT: [u8; 8] = [0; mem::size_of::<ExternRef>()];
+
+impl ExternRef64 for ExternRef {
+    fn to_u64(self) -> u64 {
+        // SAFETY: transmute check for the size at compile time, and because all 64 values are
+        // valid u64 the result is always valid.
+        //
+        // TODO: can we do that without transmute?
+        unsafe { mem::transmute(self) }
+    }
+}
+
 // —————————————————————————————— System Calls —————————————————————————————— //
 
 /// Prints a character.
@@ -69,6 +91,7 @@ extern "sysv64" fn vma_write(
     );
     let idx = match handle {
         ExternRef::Vma(vma_idx) => vma_idx,
+        ExternRef::Invalid => todo!("Handle invalid handles"), // Return an error
     };
     let vma = match ACTIVE_VMA.get(idx) {
         Some(vma) => vma,

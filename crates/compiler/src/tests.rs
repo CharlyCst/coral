@@ -9,7 +9,7 @@ use crate::alloc;
 use crate::alloc::string::String;
 use crate::compiler;
 use crate::compiler::Compiler;
-use crate::userspace_alloc::{LibcAllocator, MMapArea};
+use crate::userspace_alloc::{MMapArea, Runtime};
 use wasm::{
     ExternRef64, Instance, MemoryArea, Module, NativeModuleBuilder, RawFuncPtr, WasmModule,
 };
@@ -437,16 +437,16 @@ fn compile(wat: &str) -> WasmModule {
 
 /// Execute a module, with no arguments passed to the main function.
 fn execute_0(module: impl Module) -> i32 {
-    let alloc = LibcAllocator::new();
-    let mut instance = Instance::instantiate(&module, vec![], &alloc).unwrap();
+    let runtime = Runtime::new();
+    let mut instance = Instance::instantiate(&module, vec![], &runtime).unwrap();
     call_0(&mut instance)
 }
 
 /// Execute a module, with 2 arguments passed to the main function.
 fn execute_2(module: impl Module, arg1: i32, arg2: i32) -> i32 {
-    let alloc = LibcAllocator::new();
+    let runtime = Runtime::new();
 
-    let instance = Instance::instantiate(&module, vec![], &alloc).unwrap();
+    let instance = Instance::instantiate(&module, vec![], &runtime).unwrap();
 
     unsafe {
         let fun = "main";
@@ -471,18 +471,18 @@ fn execute_0_deps(
     module: impl Module,
     dependencies: Vec<(&str, impl Module)>,
 ) -> ExecutionResult<impl MemoryArea> {
-    let alloc = LibcAllocator::new();
+    let runtime = Runtime::new();
 
     let dependencies = dependencies
         .into_iter()
         .map(|(name, module)| {
             (
                 name,
-                Instance::instantiate(&module, vec![], &alloc).unwrap(),
+                Instance::instantiate(&module, vec![], &runtime).unwrap(),
             )
         })
         .collect::<Vec<(&str, Instance<Arc<MMapArea>>)>>();
-    let mut instance = Instance::instantiate(&module, dependencies, &alloc).unwrap();
+    let mut instance = Instance::instantiate(&module, dependencies, &runtime).unwrap();
 
     ExecutionResult {
         return_value: call_0(&mut instance),

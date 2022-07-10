@@ -1,8 +1,10 @@
+use alloc::boxed::Box;
 use alloc::sync::Arc;
+use alloc::vec;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use wasm::{ExclusiveMemoryArea, MemoryAeaAllocator, MemoryArea};
+use wasm::{ExclusiveMemoryArea, HeapKind, MemoryAeaAllocator, MemoryArea, ModuleError};
 
 const PAGE_SIZE: usize = 0x1000;
 
@@ -123,5 +125,53 @@ impl MemoryAeaAllocator for LibcAllocator {
         } else {
             Err(())
         }
+    }
+}
+
+// ——————————————————————————— Userspace Runtime ———————————————————————————— //
+
+pub struct Runtime {
+    alloc: LibcAllocator,
+}
+
+impl Runtime {
+    pub fn new() -> Self {
+        Self {
+            alloc: LibcAllocator::new(),
+        }
+    }
+}
+
+unsafe impl wasm::Runtime for Runtime {
+    type MemoryArea = Arc<MMapArea>;
+
+    fn alloc_heap(&self, min_size: u32, _kind: HeapKind) -> Result<Self::MemoryArea, ModuleError> {
+        let area = self
+            .alloc
+            .with_capacity(min_size as usize)
+            .map_err(|_| wasm::ModuleError::RuntimeError)?;
+        Ok(Arc::new(area))
+    }
+
+    fn alloc_table(&self, min_size: u32, max_size: Option<u32>) -> Result<Box<[u64]>, ModuleError> {
+        let size = if let Some(max_size) = max_size {
+            max_size
+        } else {
+            min_size
+        } as usize;
+        Ok(vec![0; size].into_boxed_slice())
+    }
+
+    fn alloc_code<F>(&self, size: usize, write_code: F) -> Result<Self::MemoryArea, ModuleError>
+    where
+        F: FnOnce(&mut [u8]) -> Result<(), ModuleError>,
+    {
+        let mut area = self
+            .alloc
+            .with_capacity(size)
+            .map_err(|_| wasm::ModuleError::RuntimeError)?;
+        write_code(area.as_bytes_mut())?;
+        area.set_executable();
+        Ok(Arc::new(area))
     }
 }

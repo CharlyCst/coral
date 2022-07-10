@@ -54,10 +54,12 @@ fn various_sizes() {
 fn alloc_vma() {
     let allocator = ALLOCATOR.lock();
     let allocator = allocator.as_ref().unwrap();
-    let mut vma = allocator.with_capacity(0x1500).unwrap(); // one page and a half on x86
+    let vma = allocator.with_capacity(0x1500).unwrap(); // one page and a half on x86
 
     // Try to fill the vma
-    for byte in vma.unsafe_as_bytes_mut() {
-        *byte = 0;
+    unsafe {
+        for byte in vma.unsafe_as_bytes_mut() {
+            *byte = 0;
+        }
     }
 }

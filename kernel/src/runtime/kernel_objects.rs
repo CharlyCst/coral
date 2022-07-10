@@ -6,10 +6,9 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
-use core::mem;
 
 use crate::memory::VirtualMemoryArea;
-use wasm::ExternRef64;
+use crate::syscalls::ExternRef;
 
 use spin::Mutex;
 
@@ -59,28 +58,6 @@ where
     pub fn get(&self, index: Idx) -> Option<Arc<Obj>> {
         let collection = self.collection.lock();
         collection.get(index.into_usize()).cloned()
-    }
-}
-
-/// A WebAssembly externref.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy)]
-pub enum ExternRef {
-    /// A virtual memory area.
-    Vma(VmaIndex),
-}
-
-/// This value is used to assert a compile time that ExternRef is 8 bytes long.
-#[doc(hidden)]
-const _EXTERNREF_SIZE_ASSERT: [u8; 8] = [0; mem::size_of::<ExternRef>()];
-
-impl ExternRef64 for ExternRef {
-    fn to_u64(self) -> u64 {
-        // SAFETY: transmute check for the size at compile time, and because all 64 values are
-        // valid u64 the result is always valid.
-        //
-        // TODO: can we do that without transmute?
-        unsafe { mem::transmute(self) }
     }
 }
 
