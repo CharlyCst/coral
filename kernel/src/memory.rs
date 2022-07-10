@@ -14,7 +14,7 @@ use x86_64::structures::paging::{Mapper, OffsetPageTable};
 use x86_64::{PhysAddr, VirtAddr};
 
 use crate::allocator;
-use wasm::{ExclusiveMemoryArea, MemoryAeaAllocator, MemoryArea};
+use wasm::MemoryArea;
 
 // TODO: Be generic over page sizes.
 const PAGE_SIZE: usize = 0x1000;
@@ -37,7 +37,7 @@ impl FrameAllocator for BootInfoFrameAllocator {}
 ///
 /// SAFETY: This function must be called **at most once**, and the boot info must contain a valid
 /// mapping of the physical memory.
-pub unsafe fn init(boot_info: &'static BootInfo) -> Result<VirtualMemoryAreaAllocator, ()> {
+pub unsafe fn init(boot_info: &'static BootInfo) -> Result<VmaAllocator, ()> {
     let physical_memory_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let level_4_table = active_level_4_table(physical_memory_offset);
 
@@ -51,7 +51,7 @@ pub unsafe fn init(boot_info: &'static BootInfo) -> Result<VirtualMemoryAreaAllo
     // Create a memory map once the heap has been allocated.
     let memory_map = VirtualMemoryMap::new_from_mapping(mapper.level_4_table());
 
-    Ok(VirtualMemoryAreaAllocator::new(
+    Ok(VmaAllocator::new(
         mapper,
         memory_map,
         frame_allocator,
@@ -184,14 +184,15 @@ impl VirtualMemoryMap {
 
 // —————————————————————————— Virtual Memory Area ——————————————————————————— //
 
+/// A Virtual Memory Area.
 // TODO: Free the area on drop.
-pub struct VirtualMemoryArea {
+pub struct Vma {
     ptr: NonNull<u8>,
     nb_pages: usize,
     size: usize,
     #[allow(unused)]
     kind: VmaKind,
-    vma_allocator: Option<VirtualMemoryAreaAllocator>,
+    vma_allocator: Option<VmaAllocator>,
     marker: PhantomData<u8>,
 }
 
@@ -202,10 +203,10 @@ pub enum VmaKind {
 
 // SAFETY: VMA's operation are thread safe, except writting to the area which must be properly
 // synchronized by the caller (e.g. a Wasm instance).
-unsafe impl Send for VirtualMemoryArea {}
-unsafe impl Sync for VirtualMemoryArea {}
+unsafe impl Send for Vma {}
+unsafe impl Sync for Vma {}
 
-impl VirtualMemoryArea {
+impl Vma {
     /// Returns the number of pages to add in order to grow by at least `n` bytes.
     fn bytes_to_pages(n: usize) -> usize {
         let page_aligned = (n + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
@@ -256,27 +257,70 @@ impl VirtualMemoryArea {
             marker: PhantomData,
         }
     }
-}
 
-impl MemoryArea for VirtualMemoryArea {
-    fn set_executable(&self) {
+    /// Sets the area executable.
+    ///
+    /// Removes write permission.
+    pub fn set_executable(&self) {
         let flags = PageTableFlags::PRESENT;
         self.update_flags(flags)
             .expect("Could not set execute permission");
     }
 
-    fn set_write(&self) {
+    /// Sets area writeable.
+    ///
+    /// Removes execute permission.
+    pub fn set_write(&self) {
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
         self.update_flags(flags)
             .expect("Could not set write permission");
     }
 
-    fn set_read_only(&self) {
+    /// Sets the area as read-only.
+    ///
+    /// Removes both write and execute permissions.
+    pub fn set_read_only(&self) {
         let flags = PageTableFlags::PRESENT | PageTableFlags::NO_EXECUTE;
         self.update_flags(flags)
             .expect("Could not set read-only permission");
     }
 
+    /// Returns a view of the area.
+    ///
+    /// SAFETY: The area might be subject to mutation through internal mutabilities (e.g. if the
+    /// area serves as an instance heap). Therefore read accesses must be properly synchronized.
+    ///
+    /// TODO: Mark as unsafe
+    pub fn as_bytes(&self) -> &[u8] {
+        // SAFETY: We rely on the correctness of `self.size()` and the validity of the pointer.
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.size()) }
+    }
+
+    /// Returns a mutable view of the area.
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        // SAFETY: we got a mutable reference to the area, so it's safe to return a mutable slice
+        // of the area as we can't have any other references (therefore no risks of concurrent
+        // updates).
+        unsafe { self.unsafe_as_bytes_mut() }
+    }
+
+    /// Returns a view of the area.
+    ///
+    /// SAFETY: The area might be subject to mutation through internal mutabilities (e.g. if the
+    /// area serves as an instance heap). Therefore read accesses must be properly synchronized.
+    pub unsafe fn unsafe_as_bytes_mut(&self) -> &mut [u8] {
+        // SAFETY: We rely on the correctness of `self.size()` and the validity of the pointer.
+        // The caller is responsible for ensuring that there is no alisaing &mut references.
+        core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size())
+    }
+
+    /// Returns the size of the slice.
+    pub fn size(&self) -> usize {
+        self.size
+    }
+}
+
+impl MemoryArea for Vma {
     fn as_ptr(&self) -> *const u8 {
         self.ptr.as_ptr()
     }
@@ -284,87 +328,51 @@ impl MemoryArea for VirtualMemoryArea {
     fn as_mut_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
     }
-
-    fn as_bytes(&self) -> &[u8] {
-        // SAFETY: We rely on the correctness of `self.size()` and the validity of the pointer.
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.size()) }
-    }
-
-    unsafe fn unsafe_as_bytes_mut(&self) -> &mut [u8] {
-        // SAFETY: We rely on the correctness of `self.size()` and the validity of the pointer.
-        // The caller is responsible for ensuring that there is no alisaing &mut references.
-        core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size())
-    }
-
-    fn size(&self) -> usize {
-        self.size
-    }
-
-    fn extend_by(&self, _n: usize) -> Result<(), ()> {
-        todo!()
-    }
-}
-
-impl ExclusiveMemoryArea for VirtualMemoryArea {
-    type Shared = Arc<VirtualMemoryArea>;
-
-    fn as_bytes_mut(&mut self) -> &mut [u8] {
-        // SAFETY: we got a mutable reference to the area, so it's safe to return a mutable slice
-        // of the area.
-        unsafe { self.unsafe_as_bytes_mut() }
-    }
-
-    fn into_shared(self) -> Self::Shared {
-        Arc::new(self)
-    }
 }
 
 // ————————————————————— Virtual Memory Area Allocator —————————————————————— //
 
 /// The Virtual Memory Area Allocator, responsible for allocating and managing virtual memory
 /// areas.
-pub struct VirtualMemoryAreaAllocator(Arc<Mutex<LockedVirtualMemoryAreaAllocator>>);
+pub struct VmaAllocator(Arc<Mutex<LockedVmaAllocator>>);
 
-impl VirtualMemoryAreaAllocator {
-    fn lock(&self) -> MutexGuard<LockedVirtualMemoryAreaAllocator> {
+impl VmaAllocator {
+    fn lock(&self) -> MutexGuard<LockedVmaAllocator> {
         self.0.lock()
     }
 }
 
-impl Clone for VirtualMemoryAreaAllocator {
+impl Clone for VmaAllocator {
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
 /// Internal state of the `VirtualMemoryAreaAllocator`.
-struct LockedVirtualMemoryAreaAllocator {
+struct LockedVmaAllocator {
     mapper: OffsetPageTable<'static>,
     memory_map: VirtualMemoryMap,
     frame_allocator: BootInfoFrameAllocator,
 }
 
-impl VirtualMemoryAreaAllocator {
+impl VmaAllocator {
     pub fn new(
         mapper: OffsetPageTable<'static>,
         memory_map: VirtualMemoryMap,
         frame_allocator: BootInfoFrameAllocator,
     ) -> Self {
-        let inner = Arc::new(Mutex::new(LockedVirtualMemoryAreaAllocator {
+        let inner = Arc::new(Mutex::new(LockedVmaAllocator {
             mapper,
             memory_map,
             frame_allocator,
         }));
         Self(inner)
     }
-}
 
-impl MemoryAeaAllocator for VirtualMemoryAreaAllocator {
-    type Area = VirtualMemoryArea;
-
+    /// Allocates a new virtual memory area with the given capacity.
     // TODO: Free allocated pages on failure.
-    fn with_capacity(&self, capacity: usize) -> Result<Self::Area, ()> {
-        let nb_pages = VirtualMemoryArea::bytes_to_pages(capacity);
+    pub fn with_capacity(&self, capacity: usize) -> Result<Vma, ()> {
+        let nb_pages = Vma::bytes_to_pages(capacity);
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
         let mut inner = self.0.lock();
         let inner = inner.deref_mut();
@@ -385,7 +393,7 @@ impl MemoryAeaAllocator for VirtualMemoryAreaAllocator {
             }
         }
 
-        Ok(VirtualMemoryArea {
+        Ok(Vma {
             ptr,
             nb_pages,
             size: capacity,
@@ -400,7 +408,7 @@ impl MemoryAeaAllocator for VirtualMemoryAreaAllocator {
 mod tests {
     use super::*;
 
-    type VMA = VirtualMemoryArea;
+    type VMA = Vma;
 
     #[test_case]
     fn bytes_to_pages() {

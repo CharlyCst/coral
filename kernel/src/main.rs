@@ -10,7 +10,7 @@ use core::ptr::NonNull;
 
 use compiler::{Compiler, X86_64Compiler};
 use kernel::kprintln;
-use kernel::memory::VirtualMemoryArea;
+use kernel::memory::Vma;
 use kernel::runtime::{KoIndex, Runtime, ACTIVE_VMA};
 
 /// The first user program to run, expected to boostrap userspace.
@@ -28,7 +28,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Initialize the Coral native module
     let vga_buffer = unsafe {
-        VirtualMemoryArea::from_raw(NonNull::new(0xb8000 as *mut u8).unwrap(), 80 * 25 * 2)
+        Vma::from_raw(NonNull::new(0xb8000 as *mut u8).unwrap(), 80 * 25 * 2)
     };
     let vga_idx = ACTIVE_VMA.insert(vga_buffer).into_externref();
     let coral_handles_table = vec![vga_idx];

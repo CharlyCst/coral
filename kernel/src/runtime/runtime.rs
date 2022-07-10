@@ -7,22 +7,19 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::memory::{VirtualMemoryArea, VirtualMemoryAreaAllocator};
+use crate::memory::{Vma, VmaAllocator};
 use crate::syscalls::ExternRef;
-use wasm::{
-    ExclusiveMemoryArea, ExternRef64, HeapKind, Instance, MemoryAeaAllocator, MemoryArea, Module,
-    ModuleError,
-};
+use wasm::{ExternRef64, HeapKind, Instance, Module, ModuleError};
 
-type Area = Arc<VirtualMemoryArea>;
+type Area = Arc<Vma>;
 
 /// The wasm runtime, responsible for allocating code and memory areas.
 pub struct Runtime {
-    alloc: VirtualMemoryAreaAllocator,
+    alloc: VmaAllocator,
 }
 
 impl Runtime {
-    pub fn new(alloc: VirtualMemoryAreaAllocator) -> Self {
+    pub fn new(alloc: VmaAllocator) -> Self {
         Self { alloc }
     }
 

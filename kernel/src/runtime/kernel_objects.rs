@@ -7,13 +7,13 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use crate::memory::VirtualMemoryArea;
+use crate::memory::Vma;
 use crate::syscalls::ExternRef;
 
 use spin::Mutex;
 
 /// The currently active Virtual Memory Areas.
-pub static ACTIVE_VMA: KernelObjectCollection<VirtualMemoryArea, VmaIndex> =
+pub static ACTIVE_VMA: KernelObjectCollection<Vma, VmaIndex> =
     KernelObjectCollection::new();
 
 /// A collection of kernel objects.

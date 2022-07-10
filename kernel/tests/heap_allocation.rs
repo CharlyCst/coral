@@ -11,14 +11,13 @@ use alloc::vec::Vec;
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
 use spin::Mutex;
-use wasm::{MemoryAeaAllocator, MemoryArea};
 
 use kernel;
-use kernel::memory::VirtualMemoryAreaAllocator;
+use kernel::memory::VmaAllocator;
 
 entry_point!(main);
 
-static ALLOCATOR: Mutex<Option<VirtualMemoryAreaAllocator>> = Mutex::new(None);
+static ALLOCATOR: Mutex<Option<VmaAllocator>> = Mutex::new(None);
 
 fn main(boot_info: &'static BootInfo) -> ! {
     kernel::init();

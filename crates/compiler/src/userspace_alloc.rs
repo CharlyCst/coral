@@ -4,7 +4,7 @@ use alloc::vec;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use wasm::{ExclusiveMemoryArea, HeapKind, MemoryAeaAllocator, MemoryArea, ModuleError};
+use wasm::{HeapKind, MemoryArea, ModuleError};
 
 const PAGE_SIZE: usize = 0x1000;
 
@@ -16,7 +16,7 @@ pub struct MMapArea {
     marker: PhantomData<u8>,
 }
 
-impl MemoryArea for MMapArea {
+impl MMapArea {
     fn set_executable(&self) {
         // Special case for zero-sized allocations
         if self.size == 0 {
@@ -38,50 +38,18 @@ impl MemoryArea for MMapArea {
         }
     }
 
-    fn set_write(&self) {
-        todo!()
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
     }
+}
 
-    fn set_read_only(&self) {
-        todo!()
-    }
-
+impl MemoryArea for MMapArea {
     fn as_ptr(&self) -> *const u8 {
         self.ptr.as_ptr()
     }
 
     fn as_mut_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
-    }
-
-    fn as_bytes(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
-    }
-
-    unsafe fn unsafe_as_bytes_mut(&self) -> &mut [u8] {
-        core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size)
-    }
-
-    fn size(&self) -> usize {
-        self.size
-    }
-
-    fn extend_by(&self, _n: usize) -> Result<(), ()> {
-        todo!()
-    }
-}
-
-impl ExclusiveMemoryArea for MMapArea {
-    type Shared = Arc<MMapArea>;
-
-    fn as_bytes_mut(&mut self) -> &mut [u8] {
-        // Safety: we got a mutable reference, so returning a mutable slice of the area is
-        // perfectly fine.
-        unsafe { self.unsafe_as_bytes_mut() }
-    }
-
-    fn into_shared(self) -> Self::Shared {
-        Arc::new(self)
     }
 }
 
@@ -95,10 +63,8 @@ impl LibcAllocator {
     }
 }
 
-impl MemoryAeaAllocator for LibcAllocator {
-    type Area = MMapArea;
-
-    fn with_capacity(&self, n: usize) -> Result<Self::Area, ()> {
+impl LibcAllocator {
+    fn with_capacity(&self, n: usize) -> Result<MMapArea, ()> {
         let mut nb_pages = 1;
         while nb_pages * PAGE_SIZE < n {
             nb_pages += 1;

@@ -8,7 +8,7 @@ use core::mem;
 
 use crate::runtime::{VmaIndex, ACTIVE_VMA};
 use crate::{kprint, kprintln};
-use wasm::{ExternRef64, MemoryArea, NativeModule, NativeModuleBuilder, RawFuncPtr};
+use wasm::{ExternRef64, NativeModule, NativeModuleBuilder, RawFuncPtr};
 
 // ————————————————————————————— Native Module —————————————————————————————— //
 

@@ -14,88 +14,22 @@ pub enum HeapKind {
     Dynamic,
 }
 
-/// A chunk of memory.
+/// A chunk of addressable memory.
 ///
-/// A memory area is associated with access permissions (Read, Write and Execute), therefore
-/// special care must be taken when accessing it as it may throw an exception.
+/// Proper synchronization when accessing areas must be ensured by both the embedder and the
+/// instances.
 pub trait MemoryArea {
-    /// Disables write and set execute permission.
-    fn set_executable(&self);
-
-    /// Disables execute and set write permission.
-    fn set_write(&self);
-
-    /// Disables execute and write permissions.
-    fn set_read_only(&self);
-
     /// Returns a pointer to the begining of the area.
     fn as_ptr(&self) -> *const u8;
 
     /// Returns a mutable pointer to the begining of the area.
     fn as_mut_ptr(&self) -> *mut u8;
-
-    /// Returns a view of the area.
-    fn as_bytes(&self) -> &[u8];
-
-    /// Returns a mutable view of the area.
-    ///
-    /// This functions is expected to be implemented with interior mutability, and therefore can be
-    /// used by multiple instances that share a memory region. The responsibility of
-    /// synchronization is deferred to the caller.
-    ///
-    /// SAFETY: The caller is responsible for ensuring that there is no concurrent access to the
-    /// memory area.
-    unsafe fn unsafe_as_bytes_mut(&self) -> &mut [u8];
-
-    /// Returns the size of the area, in bytes.
-    fn size(&self) -> usize;
-
-    /// Extends the area by at least `n` bytes.
-    fn extend_by(&self, n: usize) -> Result<(), ()>;
-
-    /// Extends the area until it can hold at least `n` bytes.
-    fn extend_to(&self, n: usize) -> Result<(), ()> {
-        let size = self.size();
-        if size < n {
-            self.extend_by(size - n)
-        } else {
-            Ok(())
-        }
-    }
-}
-
-/// A memory area that is not yet (or no longer) shared.
-///
-/// TODO: do we still need this? `Instance` don't require it anymore.
-pub trait ExclusiveMemoryArea: MemoryArea {
-    type Shared: MemoryArea;
-
-    /// Returns a mutable view of the area.
-    fn as_bytes_mut(&mut self) -> &mut [u8];
-
-    /// Returns a version of the area that can safely be shared.
-    fn into_shared(self) -> Self::Shared;
 }
 
 impl<Area> MemoryArea for Arc<Area>
 where
     Area: MemoryArea,
 {
-    #[inline]
-    fn set_executable(&self) {
-        self.deref().set_executable()
-    }
-
-    #[inline]
-    fn set_write(&self) {
-        self.deref().set_write()
-    }
-
-    #[inline]
-    fn set_read_only(&self) {
-        self.deref().set_read_only()
-    }
-
     #[inline]
     fn as_ptr(&self) -> *const u8 {
         self.deref().as_ptr()
@@ -105,37 +39,6 @@ where
     fn as_mut_ptr(&self) -> *mut u8 {
         self.deref().as_mut_ptr()
     }
-
-    #[inline]
-    fn as_bytes(&self) -> &[u8] {
-        self.deref().as_bytes()
-    }
-
-    #[inline]
-    unsafe fn unsafe_as_bytes_mut(&self) -> &mut [u8] {
-        self.deref().unsafe_as_bytes_mut()
-    }
-
-    #[inline]
-    fn size(&self) -> usize {
-        self.deref().size()
-    }
-
-    #[inline]
-    fn extend_by(&self, n: usize) -> Result<(), ()> {
-        self.deref().extend_by(n)
-    }
-}
-
-/// An allocator that can allocate new memory areas.
-///
-/// TODO: do we need this trait? Instance doesn't require it anymore.
-pub trait MemoryAeaAllocator {
-    type Area: ExclusiveMemoryArea;
-
-    /// Allocates a memory area with read and write permissions and at least `capacity` bytes
-    /// availables.
-    fn with_capacity(&self, capacity: usize) -> Result<Self::Area, ()>;
 }
 
 // ————————————————————————————————— Module ————————————————————————————————— //
