@@ -259,22 +259,43 @@ pub trait Module {
 /// arbitrary bad things depending on the instance's capabilities.
 pub unsafe trait Runtime {
     type MemoryArea;
+    type Context;
+
+    /// Creates a new context.
+    ///
+    /// The same context is guaranteed to be passed to all methods during instantation of a module.
+    fn create_context(&self) -> Self::Context;
 
     /// Allocates a heap.
     ///
     /// SAFETY: Initial memory must always be initialized to 0. It is possible to initialize memory
     /// to another value tough, but this value **must** be valid for the corresponding instance.
     /// An example of non-zero memory initialization is resuming execution from a memory snapshot.
-    fn alloc_heap(&self, min_size: u32, kind: HeapKind) -> Result<Self::MemoryArea, ModuleError>;
+    fn alloc_heap(
+        &self,
+        min_size: u32,
+        kind: HeapKind,
+        ctx: &mut Self::Context,
+    ) -> Result<Self::MemoryArea, ModuleError>;
 
     /// Allocates a table.
-    fn alloc_table(&self, min_size: u32, max_size: Option<u32>) -> Result<Box<[u64]>, ModuleError>;
+    fn alloc_table(
+        &self,
+        min_size: u32,
+        max_size: Option<u32>,
+        ctx: &mut Self::Context,
+    ) -> Result<Box<[u64]>, ModuleError>;
 
     /// Allocates a code area.
     ///
     /// SAFETY: This function is the reason why the `Runtime` trait is marked as unsafe: the
     /// runtime **must not** modify the code area once the code has been written.
-    fn alloc_code<F>(&self, size: usize, write_code: F) -> Result<Self::MemoryArea, ModuleError>
+    fn alloc_code<F>(
+        &self,
+        size: usize,
+        write_code: F,
+        ctx: &mut Self::Context,
+    ) -> Result<Self::MemoryArea, ModuleError>
     where
         F: FnOnce(&mut [u8]) -> Result<(), ModuleError>;
 }

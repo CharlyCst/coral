@@ -72,14 +72,15 @@ pub struct Instance<Area> {
 
 impl<Area: MemoryArea> Instance<Area> {
     /// Creates an instance from a module.
-    pub fn instantiate<Mod>(
+    pub fn instantiate<Mod, Ctx>(
         module: &Mod,
         import_from: Vec<(&str, Instance<Area>)>,
-        runtime: &impl Runtime<MemoryArea = Area>,
+        runtime: &impl Runtime<MemoryArea = Area, Context = Ctx>,
     ) -> ModuleResult<Self>
     where
         Mod: Module,
     {
+        let mut ctx = runtime.create_context();
         let mut import_from = import_from
             .into_iter()
             .map(|x| Some(x))
@@ -144,7 +145,7 @@ impl<Area: MemoryArea> Instance<Area> {
         // Allocate heaps
         let heaps = module.heaps().try_map(|heap_info| match heap_info {
             HeapInfo::Owned { min_size, kind } => {
-                let area = runtime.alloc_heap(*min_size, *kind)?;
+                let area = runtime.alloc_heap(*min_size, *kind, &mut ctx)?;
                 let heap = Heap::Owned { memory: area };
                 Ok(heap)
             }
@@ -168,7 +169,7 @@ impl<Area: MemoryArea> Instance<Area> {
         // Allocate tables
         let tables = module.tables().try_map(|table_info| match table_info {
             crate::TableInfo::Owned { min_size, max_size } => {
-                let table = runtime.alloc_table(*min_size, *max_size)?;
+                let table = runtime.alloc_table(*min_size, *max_size, &mut ctx)?;
                 Ok(Table::Owned(table))
             }
             crate::TableInfo::Native { ptr } => Ok(Table::Owned(ptr.clone())),
@@ -203,7 +204,7 @@ impl<Area: MemoryArea> Instance<Area> {
             code[..mod_code.len()].copy_from_slice(mod_code);
             Self::relocate(code, relocs, &funcs, &imports)
         };
-        let code = runtime.alloc_code(module.code().len(), relocate)?;
+        let code = runtime.alloc_code(module.code().len(), relocate, &mut ctx)?;
         if !relocated {
             // The runtime didn't properly relocate the code by calling the closure.
             return Err(ModuleError::RuntimeError);

@@ -110,8 +110,16 @@ impl Runtime {
 
 unsafe impl wasm::Runtime for Runtime {
     type MemoryArea = Arc<MMapArea>;
+    type Context = ();
 
-    fn alloc_heap(&self, min_size: u32, _kind: HeapKind) -> Result<Self::MemoryArea, ModuleError> {
+    fn create_context(&self) -> Self::Context {}
+
+    fn alloc_heap(
+        &self,
+        min_size: u32,
+        _kind: HeapKind,
+        _ctx: &mut Self::Context,
+    ) -> Result<Self::MemoryArea, ModuleError> {
         let area = self
             .alloc
             .with_capacity(min_size as usize)
@@ -119,7 +127,12 @@ unsafe impl wasm::Runtime for Runtime {
         Ok(Arc::new(area))
     }
 
-    fn alloc_table(&self, min_size: u32, max_size: Option<u32>) -> Result<Box<[u64]>, ModuleError> {
+    fn alloc_table(
+        &self,
+        min_size: u32,
+        max_size: Option<u32>,
+        _ctx: &mut Self::Context,
+    ) -> Result<Box<[u64]>, ModuleError> {
         let size = if let Some(max_size) = max_size {
             max_size
         } else {
@@ -128,7 +141,12 @@ unsafe impl wasm::Runtime for Runtime {
         Ok(vec![0; size].into_boxed_slice())
     }
 
-    fn alloc_code<F>(&self, size: usize, write_code: F) -> Result<Self::MemoryArea, ModuleError>
+    fn alloc_code<F>(
+        &self,
+        size: usize,
+        write_code: F,
+        _ctx: &mut Self::Context,
+    ) -> Result<Self::MemoryArea, ModuleError>
     where
         F: FnOnce(&mut [u8]) -> Result<(), ModuleError>,
     {

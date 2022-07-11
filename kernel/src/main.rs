@@ -3,6 +3,9 @@
 #![test_runner(kernel::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
+extern crate alloc;
+
+use alloc::sync::Arc;
 use bootloader::{entry_point, BootInfo};
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -27,10 +30,9 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let runtime = Runtime::new(allocator);
 
     // Initialize the Coral native module
-    let vga_buffer = unsafe {
-        Vma::from_raw(NonNull::new(0xb8000 as *mut u8).unwrap(), 80 * 25 * 2)
-    };
-    let vga_idx = ACTIVE_VMA.insert(vga_buffer).into_externref();
+    let vga_buffer =
+        unsafe { Vma::from_raw(NonNull::new(0xb8000 as *mut u8).unwrap(), 80 * 25 * 2) };
+    let vga_idx = ACTIVE_VMA.insert(Arc::new(vga_buffer)).into_externref();
     let coral_handles_table = vec![vga_idx];
     let coral_module = kernel::syscalls::build_syscall_module(coral_handles_table);
     let coral_instance = runtime

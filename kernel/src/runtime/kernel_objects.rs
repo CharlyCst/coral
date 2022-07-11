@@ -13,8 +13,7 @@ use crate::syscalls::ExternRef;
 use spin::Mutex;
 
 /// The currently active Virtual Memory Areas.
-pub static ACTIVE_VMA: KernelObjectCollection<Vma, VmaIndex> =
-    KernelObjectCollection::new();
+pub static ACTIVE_VMA: KernelObjectCollection<Vma, VmaIndex> = KernelObjectCollection::new();
 
 /// A collection of kernel objects.
 pub struct KernelObjectCollection<Obj, Idx> {
@@ -47,10 +46,10 @@ where
     Idx: KoIndex,
 {
     /// Inserts a new object into the collection. The corresponding index is returned.
-    pub fn insert(&self, object: Obj) -> Idx {
+    pub fn insert(&self, object: Arc<Obj>) -> Idx {
         let mut collection = self.collection.lock();
         let idx = collection.len();
-        collection.push(Arc::new(object));
+        collection.push(object);
         Idx::from(idx)
     }
 
