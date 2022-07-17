@@ -31,8 +31,7 @@ impl MMapArea {
             );
             if ok != 0 {
                 panic!(
-                    "Could not set memory executable: errno {}",
-                    *libc::__errno_location()
+                    "Could not set memory executable",
                 );
             }
         }
