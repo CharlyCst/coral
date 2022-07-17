@@ -1,8 +1,8 @@
 diff --git a/compiler/rustc_target/src/spec/mod.rs b/compiler/rustc_target/src/spec/mod.rs
-index 92678aed5b1..8ce7c3a6b1d 100644
+index 832eeec3e8b..56827bdab60 100644
 --- a/compiler/rustc_target/src/spec/mod.rs
 +++ b/compiler/rustc_target/src/spec/mod.rs
-@@ -1023,6 +1023,8 @@ fn $module() {
+@@ -1029,6 +1029,8 @@ fn $module() {
      ("x86_64-unknown-none", x86_64_unknown_none),
  
      ("mips64-openwrt-linux-musl", mips64_openwrt_linux_musl),
@@ -10,10 +10,10 @@ index 92678aed5b1..8ce7c3a6b1d 100644
 +    ("x86_64-coral-unknown-kernel", x86_64_coral_unknown_kernel),
  }
  
- /// Warnings encountered when parsing the target `json`.
+ /// Cow-Vec-Str: Cow<'static, [Cow<'static, str>]>
 diff --git a/compiler/rustc_target/src/spec/x86_64_coral_unknown_kernel.rs b/compiler/rustc_target/src/spec/x86_64_coral_unknown_kernel.rs
 new file mode 100644
-index 00000000000..601e34655cc
+index 00000000000..f1d246d7476
 --- /dev/null
 +++ b/compiler/rustc_target/src/spec/x86_64_coral_unknown_kernel.rs
 @@ -0,0 +1,43 @@
@@ -29,13 +29,13 @@ index 00000000000..601e34655cc
 +
 +pub fn target() -> Target {
 +    let opts = TargetOptions {
-+        env: "kernel".to_string(),
-+        vendor: "coral".to_string(),
-+        os: "unknwon".to_string(),
-+        cpu: "x86-64".to_string(),
++        env: "kernel".into(),
++        vendor: "coral".into(),
++        os: "unknwon".into(),
++        cpu: "x86-64".into(),
 +        max_atomic_width: Some(64),
 +        endian: Endian::Little,
-+        c_int_width: "32".to_string(),
++        c_int_width: "32".into(),
 +
 +        // don't use probe-stack=inline-asm until rust#83139 and rust#84667 are resolved
 +        // stack_probes: StackProbeType::Call,
@@ -44,8 +44,8 @@ index 00000000000..601e34655cc
 +        // relro_level: RelroLevel::Full,
 +        // relocation_model: RelocModel::Pic,
 +        linker_flavor: LinkerFlavor::Lld(LldFlavor::Ld),
-+        linker: Some("rust-lld".to_owned()),
-+        features: "-mmx,-sse,+soft-float".to_string(),
++        linker: Some("rust-lld".into()),
++        features: "-mmx,-sse,+soft-float".into(),
 +        executables: true,
 +        disable_redzone: true,
 +        panic_strategy: PanicStrategy::Abort,
@@ -53,10 +53,10 @@ index 00000000000..601e34655cc
 +        ..Default::default()
 +    };
 +    Target {
-+        llvm_target: "x86_64-unknown-none".to_string(),
++        llvm_target: "x86_64-unknown-none".into(),
 +        pointer_width: 64,
-+        data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128".to_string(),
-+        arch: "x86_64".to_string(),
++        data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128".into(),
++        arch: "x86_64".into(),
 +        options: opts,
 +    }
 +}
@@ -73,11 +73,11 @@ index 43168e77296..b4a18d40452 100644
          // These platforms don't have any special requirements.
      } else {
 diff --git a/library/std/src/alloc.rs b/library/std/src/alloc.rs
-index 8ee55234cea..6b6b7270c13 100644
+index 63c527b64da..8fd9ddaa4c6 100644
 --- a/library/std/src/alloc.rs
 +++ b/library/std/src/alloc.rs
-@@ -318,7 +318,7 @@ fn default_alloc_error_hook(layout: Layout) {
-     rtprintpanic!("memory allocation of {} bytes failed\n", layout.size());
+@@ -327,7 +327,7 @@ fn default_alloc_error_hook(layout: Layout) {
+     }
  }
  
 -#[cfg(not(test))]
@@ -86,7 +86,7 @@ index 8ee55234cea..6b6b7270c13 100644
  #[alloc_error_handler]
  #[unstable(feature = "alloc_internals", issue = "none")]
 diff --git a/library/std/src/collections/hash/map.rs b/library/std/src/collections/hash/map.rs
-index 53b43455b5a..ff73afd92f0 100644
+index 977714281fb..52ee0dbb531 100644
 --- a/library/std/src/collections/hash/map.rs
 +++ b/library/std/src/collections/hash/map.rs
 @@ -2933,10 +2933,17 @@ impl RandomState {
@@ -108,7 +108,7 @@ index 53b43455b5a..ff73afd92f0 100644
          // simply always called `rand::thread_rng().gen()` twice. In #31356 it
          // was discovered, however, that because we re-seed the thread-local RNG
 diff --git a/library/std/src/panicking.rs b/library/std/src/panicking.rs
-index 2b9ae3210de..87a08b01df9 100644
+index f1baf077580..36728790526 100644
 --- a/library/std/src/panicking.rs
 +++ b/library/std/src/panicking.rs
 @@ -527,7 +527,7 @@ pub fn panicking() -> bool {
@@ -137,10 +137,10 @@ index 00000000000..7117a9db0ec
 +}
 diff --git a/library/std/src/sys/coral/mod.rs b/library/std/src/sys/coral/mod.rs
 new file mode 100644
-index 00000000000..3b4168d40f1
+index 00000000000..98e995f0992
 --- /dev/null
 +++ b/library/std/src/sys/coral/mod.rs
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,55 @@
 +//! System bindings for the coral kernel
 +//!
 +//! This module contains the facade (aka platform-specific) implementations of OS level
@@ -185,14 +185,10 @@ index 00000000000..3b4168d40f1
 +pub mod thread_local_dtor;
 +#[path = "../unsupported/thread_local_key.rs"]
 +pub mod thread_local_key;
++#[path = "../unsupported/locks/mod.rs"]
++pub mod locks;
 +#[path = "../unsupported/time.rs"]
 +pub mod time;
-+#[path = "../unsupported/condvar.rs"]
-+pub mod condvar;
-+#[path = "../unsupported/mutex.rs"]
-+pub mod mutex;
-+#[path = "../unsupported/rwlock.rs"]
-+pub mod rwlock;
 +#[path = "../unsupported/thread.rs"]
 +pub mod thread;
 +
@@ -238,10 +234,10 @@ index 804727fbc54..122d7bc0bd1 100644
                   all(target_vendor = "fortanix", target_env = "sgx")))] {
          pub use crate::sys::net;
 diff --git a/src/bootstrap/compile.rs b/src/bootstrap/compile.rs
-index f05d1dcf4fc..b0a984b51e3 100644
+index 7a8c7fee5f5..8d98e31f92b 100644
 --- a/src/bootstrap/compile.rs
 +++ b/src/bootstrap/compile.rs
-@@ -308,6 +308,9 @@ pub fn std_cargo(builder: &Builder<'_>, target: TargetSelection, stage: u32, car
+@@ -307,6 +307,9 @@ pub fn std_cargo(builder: &Builder<'_>, target: TargetSelection, stage: u32, car
      } else {
          let mut features = builder.std_features(target);
          features.push_str(compiler_builtins_c_feature);
@@ -252,11 +248,11 @@ index f05d1dcf4fc..b0a984b51e3 100644
          cargo
              .arg("--features")
 diff --git a/src/tools/build-manifest/src/main.rs b/src/tools/build-manifest/src/main.rs
-index 8a62146abfc..93fa7bb0bc0 100644
+index 6338e467055..45e82838bea 100644
 --- a/src/tools/build-manifest/src/main.rs
 +++ b/src/tools/build-manifest/src/main.rs
-@@ -153,6 +153,7 @@
-     "x86_64-unknown-netbsd",
+@@ -155,6 +155,7 @@
+     "x86_64-unknown-none",
      "x86_64-unknown-redox",
      "x86_64-unknown-hermit",
 +    "x86_64-unknown-none-coral",

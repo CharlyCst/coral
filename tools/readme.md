@@ -20,8 +20,8 @@ git clone https://github.com/rust-lang/rust
 
 ```sh
 cd rust
-git checkout 1.60.0
-git apply ../rustc-coral.path
+git checkout 1.62.0
+git apply ../rustc-coral.patch
 ```
 
 **3] Create the configuration**
@@ -29,7 +29,7 @@ git apply ../rustc-coral.path
 Copy the configuration template:
 
 ```sh
-cp ../rustc-coral.config.tom config.toml
+cp ../rustc-coral.config.toml config.toml
 
 # Use your favorite editor
 vim config.toml
@@ -42,6 +42,8 @@ Here is the significations of the various values:
 {{host-architecture}}: The host target triple.
 {{absolute-build-path}}: an absolute path to a build folder.
 ```
+
+The host architecture can be looked up with `rustc +stable --version --verbose`.
 
 **4] Build & install the toolchain**
 
@@ -56,7 +58,7 @@ Then install the toolchain locally, using Rustup, by replacing the values in the
 following command by those used in `config.toml`:
 
 ```sh
-rustup toolchain link coral {{absolute-build-path}}/{{host-architecture}}/stage1/
+rustup toolchain link coral {{path-to-rust-folder}}/build/{{host-architecture}}/stage1/
 ```
 
 It is then possible to check if the compiler was correctly installed with:
@@ -65,4 +67,6 @@ It is then possible to check if the compiler was correctly installed with:
 # Print something similar to "rustc 1.xx.xx"
 rustc +coral --version
 ```
+Aditionnaly, to make the tools (e.g. `rustfmt`) available copy them from the
+`stage1-tools-bin` to `stage1/bin`.
 
