@@ -1,10 +1,11 @@
 (module
     (import "coral" "print_char" (func $print_char (type $print_char_t)))
-    (import "coral" "buffer_write" (func $buffer_write (type $buffer_write_t)))
-    (import "coral" "handles" (table $handles 2 2 externref))
-    (type $print_char_t (func (param i32)))
-    (type $buffer_write_t (func (param externref) (param i64) (param i64) (param i64)))
-    (memory $buffer 1 1)
+    (import "coral" "vma_write"  (func $buffer_write (type $buffer_write_t)))
+    (import "coral" "handles"    (table $handles 2 2 externref))
+    (type $print_char_t   (func (param i32)))
+    (type $buffer_write_t (func (param externref) (param externref) (param i64) (param i64) (param i64)))
+    (memory $mem 1 1)
+    (table  $self 2 2 externref)
     (func $init (result i32)
         ;; Print greeting message
         i32.const 0x48 ;; H
@@ -53,11 +54,19 @@
         call $print_char
 
         ;; Write to buffer
-        i32.const 2     ;; x
-        i32.const 4     ;; y
+        i32.const 40    ;; x
+        i32.const 10    ;; y
         i32.const 0x61  ;; character
-        i32.const 14    ;; color
+        i32.const 13    ;; color
         call $write_byte
+
+        i32.const 0     ;; x
+        i32.const 0     ;; y
+        i32.const 0x62  ;; character
+        i32.const 13    ;; color
+        call $write_byte
+
+        ;; Flusing
         call $flush
 
         ;; Return value
@@ -95,12 +104,16 @@
     (func $flush
         ;; Host buffer handle
         i32.const 0
+        table.get $self
+
+        ;; Target buffer handle
+        i32.const 0
         table.get $handles
 
-        ;; Buffer offset in wasm memory
+        ;; Source offset
         i64.const 0
 
-        ;; Host buffer offset
+        ;; Target offset
         i64.const 0
 
         ;; Buffer size

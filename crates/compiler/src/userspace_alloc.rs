@@ -115,7 +115,7 @@ unsafe impl wasm::Runtime for Runtime {
 
     fn alloc_heap(
         &self,
-        min_size: u32,
+        min_size: usize,
         _kind: HeapKind,
         _ctx: &mut Self::Context,
     ) -> Result<Self::MemoryArea, ModuleError> {

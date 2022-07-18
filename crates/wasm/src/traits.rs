@@ -273,7 +273,7 @@ pub unsafe trait Runtime {
     /// An example of non-zero memory initialization is resuming execution from a memory snapshot.
     fn alloc_heap(
         &self,
-        min_size: u32,
+        min_size: usize,
         kind: HeapKind,
         ctx: &mut Self::Context,
     ) -> Result<Self::MemoryArea, ModuleError>;

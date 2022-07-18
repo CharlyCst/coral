@@ -21,7 +21,7 @@ pub fn build_syscall_module(handles_table: Vec<ExternRef>) -> NativeModule {
                 RawFuncPtr::new(print_char as *mut u8),
             )
             .add_func(
-                String::from("buffer_write"),
+                String::from("vma_write"),
                 RawFuncPtr::new(vma_write as *mut u8),
             )
             .add_table(String::from("handles"), handles_table)
@@ -76,32 +76,61 @@ extern "sysv64" fn print_char(char: WasmU32, _vmctx: VmCtx) {
 }
 
 extern "sysv64" fn vma_write(
-    handle: ExternRef,
-    buffer: WasmU64,
-    vma_offset: WasmU64,
-    buffer_size: WasmU64,
+    source: ExternRef,
+    target: ExternRef,
+    source_offset: WasmU64,
+    target_offset: WasmU64,
+    size: WasmU64,
     _vmctx: VmCtx,
 ) {
     kprintln!(
-        "Buffer Write: {:?} - address 0x{:x} - offset 0x{:x} - len 0x{:x}",
-        handle,
-        buffer,
-        vma_offset,
-        buffer_size
+        "VMA-Write - source {:?} + 0x{:x} - target {:?} + 0x{:x} - len 0x{:x}",
+        source,
+        source_offset,
+        target,
+        target_offset,
+        size,
     );
-    let idx = match handle {
+    let source = match source {
         ExternRef::Vma(vma_idx) => vma_idx,
-        ExternRef::Invalid => todo!("Handle invalid handles"), // Return an error
+        _ => todo!("Source handle is invalid"), // Return an error
     };
-    let vma = match ACTIVE_VMA.get(idx) {
+    let target = match target {
+        ExternRef::Vma(vma_idx) => vma_idx,
+        _ => todo!("Target handle is invalid"),
+    };
+    let source_vma = match ACTIVE_VMA.get(source) {
         Some(vma) => vma,
-        None => return,
+        None => todo!("Source VMA does not exist"),
     };
+    let target_vma = match ACTIVE_VMA.get(target) {
+        Some(vma) => vma,
+        None => todo!("Target VMA does not exist"),
+    };
+
+    let size = usize::try_from(size).expect("Invalid size");
+    let source_offset = usize::try_from(source_offset).expect("Invalid source offset");
+    let target_offset = usize::try_from(target_offset).expect("Invalid target offset");
 
     // SAFETY: TODO: what are the safety condition? Assume that userspace synchronized correctly?
     unsafe {
-        let _buffer = vma.unsafe_as_bytes_mut();
-        // TODO: get the instance memory
-        // buffer[..vma_offset][..buffer_size]
+        let source = source_vma.unsafe_as_bytes_mut();
+        let target = target_vma.unsafe_as_bytes_mut();
+
+        let source_end = match source_offset.checked_add(size) {
+            Some(source_end) => source_end,
+            None => todo!("Invalid source range"),
+        };
+        let target_end = match target_offset.checked_add(size) {
+            Some(target_end) => target_end,
+            None => todo!("Invalid source range"),
+        };
+        if source.len() < source_end {
+            todo!("Source index out of bound");
+        }
+        if target.len() < target_end {
+            todo!("Target index out of bound");
+        }
+        target[target_offset..target_end].copy_from_slice(&source[source_offset..source_end])
     }
 }

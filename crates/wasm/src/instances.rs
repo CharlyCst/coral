@@ -10,6 +10,8 @@ use crate::traits::{GlobIndex, MemoryArea, Module, ModuleError, ModuleResult, Re
 use crate::vmctx::VMContext;
 use collections::{FrozenMap, HashMap};
 
+const PAGE_SIZE: usize = 0x1000;
+
 enum Item<'a, Area: MemoryArea> {
     Func(&'a Func),
     Heap(&'a Heap<Area>),
@@ -145,7 +147,7 @@ impl<Area: MemoryArea> Instance<Area> {
         // Allocate heaps
         let heaps = module.heaps().try_map(|heap_info| match heap_info {
             HeapInfo::Owned { min_size, kind } => {
-                let area = runtime.alloc_heap(*min_size, *kind, &mut ctx)?;
+                let area = runtime.alloc_heap((*min_size as usize) * PAGE_SIZE, *kind, &mut ctx)?;
                 let heap = Heap::Owned { memory: area };
                 Ok(heap)
             }

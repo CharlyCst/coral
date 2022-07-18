@@ -17,7 +17,7 @@ use kernel::memory::Vma;
 use kernel::runtime::{KoIndex, Runtime, ACTIVE_VMA};
 
 /// The first user program to run, expected to boostrap userspace.
-const WASM_USERBOOT: &'static [u8; 306] = std::include_bytes!("../wasm/userboot.wasm");
+const WASM_USERBOOT: &'static [u8; 315] = std::include_bytes!("../wasm/userboot.wasm");
 
 entry_point!(kernel_main);
 
