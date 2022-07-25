@@ -86,6 +86,18 @@ pub struct ImportedTable {
     pub name: String,
 }
 
+#[derive(Clone)]
+pub struct DataSegment {
+    /// The memory to which the segment must be applied.
+    pub memory_index: MemoryIndex,
+    /// An optional base, in the form of a global.
+    pub base: Option<GlobalIndex>,
+    /// Offset, relative to the base if any, to 0 otherwise.
+    pub offset: u64,
+    /// The actual data.
+    pub data: Vec<u8>,
+}
+
 pub struct ModuleInfo {
     /// TypeID -> Type
     pub func_types: PrimaryMap<TypeIndex, ir::Signature>,
@@ -109,6 +121,8 @@ pub struct ModuleInfo {
     pub imported_tables: SecondaryMap<TableIndex, Option<ImportedTable>>,
     /// The list of imported modules
     pub modules: PrimaryMap<ImportIndex, String>,
+    /// The list of data segments to initialize.
+    pub segments: Vec<DataSegment>,
     /// The number of imported funcs. The defined functions goes after the imported ones.
     nb_imported_funcs: usize,
     /// Configuration of the target
@@ -203,6 +217,7 @@ impl ModuleEnvironment {
             tables: PrimaryMap::new(),
             imported_tables: SecondaryMap::new(),
             modules: PrimaryMap::new(),
+            segments: Vec::new(),
             nb_imported_funcs: 0,
             target_config,
         };
@@ -407,12 +422,19 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
 
     fn declare_data_initialization(
         &mut self,
-        _memory_index: cw::MemoryIndex,
-        _base: Option<cw::GlobalIndex>,
-        _offset: u64,
-        _data: &'data [u8],
+        memory_index: MemoryIndex,
+        base: Option<GlobalIndex>,
+        offset: u64,
+        data: &'data [u8],
     ) -> cw::WasmResult<()> {
-        todo!()
+        let data_segment = DataSegment {
+            memory_index,
+            base,
+            offset,
+            data: data.to_vec(),
+        };
+        self.info.segments.push(data_segment);
+        Ok(())
     }
 }
 

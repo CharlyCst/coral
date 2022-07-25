@@ -30,9 +30,7 @@ impl MMapArea {
                 libc::PROT_READ | libc::PROT_EXEC,
             );
             if ok != 0 {
-                panic!(
-                    "Could not set memory executable",
-                );
+                panic!("Could not set memory executable",);
             }
         }
     }
@@ -113,16 +111,21 @@ unsafe impl wasm::Runtime for Runtime {
 
     fn create_context(&self) -> Self::Context {}
 
-    fn alloc_heap(
+    fn alloc_heap<F>(
         &self,
         min_size: usize,
         _kind: HeapKind,
+        initialize: F,
         _ctx: &mut Self::Context,
-    ) -> Result<Self::MemoryArea, ModuleError> {
-        let area = self
+    ) -> Result<Self::MemoryArea, ModuleError>
+    where
+        F: FnOnce(&mut [u8]) -> Result<(), ModuleError>,
+    {
+        let mut area = self
             .alloc
             .with_capacity(min_size as usize)
             .map_err(|_| wasm::ModuleError::RuntimeError)?;
+        initialize(area.as_bytes_mut())?;
         Ok(Arc::new(area))
     }
 

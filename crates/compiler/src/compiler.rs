@@ -7,8 +7,8 @@ use cranelift_wasm::{translate_module, GlobalInit, ModuleTranslationState, WasmE
 
 use collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
 use wasm::{
-    FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapInfo, HeapKind, ItemRef, ModuleInfo, Reloc,
-    RelocKind, TableInfo, WasmModule,
+    DataSegment, FuncIndex, FuncInfo, GlobIndex, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind,
+    ItemRef, ModuleInfo, Reloc, RelocKind, TableInfo, WasmModule,
 };
 
 use crate::env;
@@ -177,7 +177,20 @@ impl Compiler for X86_64Compiler {
         }
         let globs = FrozenMap::freeze(globs);
 
-        let mut mod_info = ModuleInfo::new(funcs, heaps, tables, globs, modules);
+        // Build the data segments
+        let mut segments = Vec::with_capacity(module_info.segments.len());
+        for segment in module_info.segments {
+            segments.push(DataSegment {
+                heap_index: HeapIndex::from_u32(segment.memory_index.as_u32()),
+                base: segment
+                    .base
+                    .map(|glob_idx| GlobIndex::from_u32(glob_idx.as_u32())),
+                offset: segment.offset,
+                data: segment.data,
+            })
+        }
+
+        let mut mod_info = ModuleInfo::new(funcs, heaps, tables, globs, modules, segments);
         for (func_idx, names) in funcs_names.iter() {
             mod_info.export_func(func_idx, names);
         }

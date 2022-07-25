@@ -86,6 +86,20 @@ where
         })
     }
 
+    pub fn try_map_enumerate<F, U, E>(&self, mut f: F) -> Result<FrozenMap<K, U>, E>
+    where
+        F: FnMut(K, &V) -> Result<U, E>,
+    {
+        let mut elems = Vec::with_capacity(self.len());
+        for (idx, elem) in self.elems.iter().enumerate() {
+            elems.push(f(K::new(idx), elem)?);
+        }
+        Ok(FrozenMap {
+            elems,
+            unused: PhantomData,
+        })
+    }
+
     /// Change the type of the index in place.
     pub fn reindex<Q>(self) -> FrozenMap<Q, V> {
         FrozenMap {

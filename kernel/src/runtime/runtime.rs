@@ -56,17 +56,21 @@ unsafe impl wasm::Runtime for Runtime {
         }
     }
 
-    fn alloc_heap(
+    fn alloc_heap<F>(
         &self,
         min_size: usize,
         _kind: HeapKind,
+        initialize: F,
         ctx: &mut Self::Context,
-    ) -> Result<Self::MemoryArea, ModuleError> {
+    ) -> Result<Self::MemoryArea, ModuleError>
+    where
+        F: FnOnce(&mut [u8]) -> Result<(), ModuleError>,
+    {
         let mut vma = self
             .alloc
             .with_capacity(min_size as usize)
             .map_err(|_| ModuleError::FailedToInstantiate)?;
-        vma.zeroed();
+        initialize(vma.as_bytes_mut())?;
         let vma = Arc::new(vma);
         let vma_idx = ACTIVE_VMA.insert(Arc::clone(&vma));
         ctx.heaps.push(vma_idx);

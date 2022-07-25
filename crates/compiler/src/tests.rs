@@ -57,6 +57,24 @@ fn zeroed_memory() {
 }
 
 #[test]
+fn data_segment() {
+    let module = compile(
+        r#"
+        (module
+            (func $zero (result i32)
+                i32.const 22 ;; Load "c"
+                i32.load
+            )
+            (memory $mem 1 1)
+            (data (i32.const 20) "abc")
+            (export "main" (func $zero))
+        )
+    "#,
+    );
+    assert_eq!(execute_0(module), 0x63);
+}
+
+#[test]
 fn store_and_load() {
     let module = compile(
         r#"

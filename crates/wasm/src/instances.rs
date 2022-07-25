@@ -3,14 +3,14 @@ use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
 
 use crate::traits::{
-    FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, ImportIndex, ItemRef, RawFuncPtr,
-    RelocKind, TableIndex,
+    DataSegment, FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, ImportIndex,
+    ItemRef, RawFuncPtr, RelocKind, TableIndex,
 };
 use crate::traits::{GlobIndex, MemoryArea, Module, ModuleError, ModuleResult, Reloc, Runtime};
 use crate::vmctx::VMContext;
 use collections::{FrozenMap, HashMap};
 
-const PAGE_SIZE: usize = 0x1000;
+const PAGE_SIZE: usize = 0x10000; // 64 Ki bytes
 
 enum Item<'a, Area: MemoryArea> {
     Func(&'a Func),
@@ -100,6 +100,7 @@ impl<Area: MemoryArea> Instance<Area> {
             Err(ModuleError::FailedToInstantiate)
         })?;
 
+        // Prepare functions
         let funcs = module.funcs().try_map(|func_info| match func_info {
             FuncInfo::Owned { offset } => Ok(Func::Owned { offset: *offset }),
             FuncInfo::Native { ptr } => Ok(Func::Native { ptr: *ptr }),
@@ -123,6 +124,7 @@ impl<Area: MemoryArea> Instance<Area> {
             }
         })?;
 
+        // Initialize globals
         let globs = module.globs().try_map(|glob_info| match glob_info {
             GlobInfo::Owned { init } => Ok(Glob::Owned { init: *init }),
             GlobInfo::Imported { module, name } => {
@@ -144,29 +146,52 @@ impl<Area: MemoryArea> Instance<Area> {
                 })
             }
         })?;
-        // Allocate heaps
-        let heaps = module.heaps().try_map(|heap_info| match heap_info {
-            HeapInfo::Owned { min_size, kind } => {
-                let area = runtime.alloc_heap((*min_size as usize) * PAGE_SIZE, *kind, &mut ctx)?;
-                let heap = Heap::Owned { memory: area };
-                Ok(heap)
-            }
-            HeapInfo::Imported { module, name } => {
-                // Look for the corresponding module
-                let instance = &imports[*module];
-                let heap_ref = instance
-                    .items
-                    .get(name)
-                    .ok_or(ModuleError::FailedToInstantiate)?
-                    .as_heap()
-                    .ok_or(ModuleError::FailedToInstantiate)?;
 
-                Ok(Heap::Imported {
-                    from: *module,
-                    index: heap_ref,
-                })
-            }
-        })?;
+        // Allocate heaps
+        let heaps = module
+            .heaps()
+            .try_map_enumerate(|heap_idx, heap_info| match heap_info {
+                HeapInfo::Owned { min_size, kind } => {
+                    let mut initialized = false;
+                    let initialize = |heap: &mut [u8]| {
+                        if heap.len() < *min_size as usize {
+                            return Err(ModuleError::FailedToInstantiate);
+                        }
+                        initialized = true;
+                        Self::initialize_heap(heap, heap_idx, module.data_segments())
+                    };
+
+                    // Allocate heap
+                    let area = runtime.alloc_heap(
+                        (*min_size as usize) * PAGE_SIZE,
+                        *kind,
+                        initialize,
+                        &mut ctx,
+                    )?;
+
+                    // Check that the heap was initialized
+                    if !initialized {
+                        return Err(ModuleError::FailedToInstantiate);
+                    }
+
+                    Ok(Heap::Owned { memory: area })
+                }
+                HeapInfo::Imported { module, name } => {
+                    // Look for the corresponding module
+                    let instance = &imports[*module];
+                    let heap_ref = instance
+                        .items
+                        .get(name)
+                        .ok_or(ModuleError::FailedToInstantiate)?
+                        .as_heap()
+                        .ok_or(ModuleError::FailedToInstantiate)?;
+
+                    Ok(Heap::Imported {
+                        from: *module,
+                        index: heap_ref,
+                    })
+                }
+            })?;
 
         // Allocate tables
         let tables = module.tables().try_map(|table_info| match table_info {
@@ -259,6 +284,35 @@ impl<Area: MemoryArea> Instance<Area> {
 
     pub fn get_vmctx_ptr(&self) -> *const u8 {
         self.vmctx.as_ptr()
+    }
+
+    fn initialize_heap(
+        heap: &mut [u8],
+        idx: HeapIndex,
+        segments: &[DataSegment],
+    ) -> ModuleResult<()> {
+        // Zero out the memory
+        heap.fill(0);
+
+        // Initialize with data segments
+        for segment in segments {
+            // Skip segments for other heaps
+            if segment.heap_index != idx {
+                continue;
+            }
+
+            // Copy data
+            let start = if let Some(_glob_idx) = segment.base {
+                // TODO: handle globals
+                todo!("Base are not yet supported for data segments");
+            } else {
+                segment.offset as usize
+            };
+            let end = start + segment.data.len();
+            heap[start..end].copy_from_slice(&segment.data);
+        }
+
+        Ok(())
     }
 
     fn relocate(

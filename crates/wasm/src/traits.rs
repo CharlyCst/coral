@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::ops::Deref;
 use core::ptr::NonNull;
 
@@ -180,6 +181,19 @@ pub enum GlobInfo {
     Imported { module: ImportIndex, name: String },
 }
 
+/// A data segment used to initialize memory.
+#[derive(Clone)]
+pub struct DataSegment {
+    /// The heap to which the segment must be applied.
+    pub heap_index: HeapIndex,
+    /// An optional base, in the form of a global.
+    pub base: Option<GlobIndex>,
+    /// Offset, relative to the base if any, to 0 otherwise.
+    pub offset: u64,
+    /// The actual data.
+    pub data: Vec<u8>,
+}
+
 pub trait VMContextLayout {
     fn heaps(&self) -> &[HeapIndex];
     fn tables(&self) -> &[TableIndex];
@@ -242,6 +256,7 @@ pub trait Module {
     fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo>;
     fn globs(&self) -> &FrozenMap<GlobIndex, GlobInfo>;
     fn imports(&self) -> &FrozenMap<ImportIndex, String>;
+    fn data_segments(&self) -> &[DataSegment];
     fn relocs(&self) -> &[Reloc];
     fn public_items(&self) -> &HashMap<String, ItemRef>;
     fn vmctx_layout(&self) -> &Self::VMContext;
@@ -268,15 +283,17 @@ pub unsafe trait Runtime {
 
     /// Allocates a heap.
     ///
-    /// SAFETY: Initial memory must always be initialized to 0. It is possible to initialize memory
-    /// to another value tough, but this value **must** be valid for the corresponding instance.
-    /// An example of non-zero memory initialization is resuming execution from a memory snapshot.
-    fn alloc_heap(
+    /// SAFETY: Initial memory must always be initialized to 0 by calling the `initialize` callback
+    /// on the memory.
+    fn alloc_heap<F>(
         &self,
         min_size: usize,
         kind: HeapKind,
+        initialize: F,
         ctx: &mut Self::Context,
-    ) -> Result<Self::MemoryArea, ModuleError>;
+    ) -> Result<Self::MemoryArea, ModuleError>
+    where
+        F: FnOnce(&mut [u8]) -> Result<(), ModuleError>;
 
     /// Allocates a table.
     fn alloc_table(

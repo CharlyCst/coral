@@ -2,8 +2,8 @@ use crate::alloc::string::{String, ToString};
 use crate::alloc::vec::Vec;
 
 use crate::traits::{
-    ExternRef64, FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo, ImportIndex,
-    RawFuncPtr, Reloc, TableIndex, TableInfo,
+    DataSegment, ExternRef64, FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo,
+    ImportIndex, RawFuncPtr, Reloc, TableIndex, TableInfo,
 };
 use crate::traits::{ItemRef, Module, VMContextLayout};
 use collections::{FrozenMap, HashMap, PrimaryMap};
@@ -68,6 +68,7 @@ pub struct ModuleInfo {
     tables: FrozenMap<TableIndex, TableInfo>,
     globs: FrozenMap<GlobIndex, GlobInfo>,
     imports: FrozenMap<ImportIndex, String>,
+    segments: Vec<DataSegment>,
 }
 
 impl ModuleInfo {
@@ -77,6 +78,7 @@ impl ModuleInfo {
         tables: FrozenMap<TableIndex, TableInfo>,
         globs: FrozenMap<GlobIndex, GlobInfo>,
         imports: FrozenMap<ImportIndex, String>,
+        segments: Vec<DataSegment>,
     ) -> Self {
         Self {
             exported_items: HashMap::new(),
@@ -85,6 +87,7 @@ impl ModuleInfo {
             tables,
             globs,
             imports,
+            segments,
         }
     }
 
@@ -145,6 +148,7 @@ pub struct WasmModule {
     tables: FrozenMap<TableIndex, TableInfo>,
     globs: FrozenMap<GlobIndex, GlobInfo>,
     imports: FrozenMap<ImportIndex, String>,
+    segments: Vec<DataSegment>,
     code: Vec<u8>,
     relocs: Vec<Reloc>,
     vmctx_layout: SimpleVMContextLayout,
@@ -192,6 +196,7 @@ impl WasmModule {
             tables: info.tables,
             globs: info.globs,
             imports: info.imports,
+            segments: info.segments,
             code,
             relocs,
             vmctx_layout,
@@ -237,11 +242,16 @@ impl Module for WasmModule {
     fn vmctx_layout(&self) -> &Self::VMContext {
         &self.vmctx_layout
     }
+
+    fn data_segments(&self) -> &[DataSegment] {
+        &self.segments
+    }
 }
 
 // ————————————————————————————— Native Module —————————————————————————————— //
 
 static EMPTY_CODE: [u8; 0] = [];
+static EMPTY_SEGMENT: [DataSegment; 0] = [];
 static EMPTY_HEAPS: FrozenMap<HeapIndex, HeapInfo> = FrozenMap::empty();
 static EMPTY_GLOBS: FrozenMap<GlobIndex, GlobInfo> = FrozenMap::empty();
 static EMPTY_IMPORTS: FrozenMap<ImportIndex, String> = FrozenMap::empty();
@@ -354,5 +364,9 @@ impl Module for NativeModule {
 
     fn vmctx_layout(&self) -> &Self::VMContext {
         &self.vmctx_layout
+    }
+
+    fn data_segments(&self) -> &[DataSegment] {
+        &EMPTY_SEGMENT
     }
 }
