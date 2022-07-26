@@ -131,6 +131,6 @@ extern "sysv64" fn vma_write(
         if target.len() < target_end {
             todo!("Target index out of bound");
         }
-        target[target_offset..target_end].copy_from_slice(&source[source_offset..source_end])
+        target[target_offset..target_end].copy_from_slice(&source[source_offset..source_end]);
     }
 }

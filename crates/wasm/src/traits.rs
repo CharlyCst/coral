@@ -7,6 +7,8 @@ use core::ptr::NonNull;
 
 use collections::{entity_impl, FrozenMap, HashMap};
 
+use crate::types::RefType;
+
 // ——————————————————————————————— Allocator ———————————————————————————————— //
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,13 +158,16 @@ pub enum TableInfo {
     Owned {
         min_size: u32,
         max_size: Option<u32>,
+        ty: RefType,
     },
     Imported {
         module: ImportIndex,
         name: String,
+        ty: RefType,
     },
     Native {
         ptr: Box<[u64]>,
+        ty: RefType,
     },
 }
 
@@ -300,6 +305,7 @@ pub unsafe trait Runtime {
         &self,
         min_size: u32,
         max_size: Option<u32>,
+        ty: RefType,
         ctx: &mut Self::Context,
     ) -> Result<Box<[u64]>, ModuleError>;
 

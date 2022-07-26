@@ -7,7 +7,9 @@ mod instances;
 mod modules;
 mod traits;
 mod vmctx;
+mod types;
 
 pub use instances::*;
 pub use modules::*;
 pub use traits::*;
+pub use types::*;

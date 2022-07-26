@@ -20,7 +20,7 @@ use collections::{EntityRef, PrimaryMap, SecondaryMap};
 use wasm::ImportIndex;
 
 /// Size of a wasm page, defined by the standard.
-const WASM_PAGE_SIZE: u64 = 0x1000;
+const WASM_PAGE_SIZE: u64 = 0x10000; // 64 Ki
 /// Width of a VMContext entry. For now the width is independent of the architecture, and thorefore
 /// each entry span 8 bytes even for 32 bits architectures.
 const VMCTX_ENTRY_WIDTH: i32 = 0x8;
@@ -502,8 +502,13 @@ impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
     fn make_heap(
         &mut self,
         func: &mut ir::Function,
-        _index: cw::MemoryIndex,
+        index: cw::MemoryIndex,
     ) -> cw::WasmResult<ir::Heap> {
+        // Retrieve the memory bound
+        // TODO: handle resizeable heaps
+        let memory = &self.info.heaps[index].entity;
+        let bound = memory.minimum * WASM_PAGE_SIZE;
+
         // Heaps addresses are stored in the VMContext
         let vmctx = self.vmctx(func);
         let base = func.create_global_value(ir::GlobalValueData::Load {
@@ -517,7 +522,7 @@ impl<'info> cw::FuncEnvironment for FunctionEnvironment<'info> {
             min_size: WASM_PAGE_SIZE.into(),
             offset_guard_size: 0.into(),
             style: ir::HeapStyle::Static {
-                bound: (2 * WASM_PAGE_SIZE).into(),
+                bound: bound.into(),
             },
             index_type: ir::types::I32, // TODO: handle wasm64
         });

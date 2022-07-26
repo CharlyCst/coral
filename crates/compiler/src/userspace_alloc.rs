@@ -4,7 +4,7 @@ use alloc::vec;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use wasm::{HeapKind, MemoryArea, ModuleError};
+use wasm::{HeapKind, MemoryArea, ModuleError, RefType};
 
 const PAGE_SIZE: usize = 0x1000;
 
@@ -133,6 +133,7 @@ unsafe impl wasm::Runtime for Runtime {
         &self,
         min_size: u32,
         max_size: Option<u32>,
+        _ty: RefType,
         _ctx: &mut Self::Context,
     ) -> Result<Box<[u64]>, ModuleError> {
         let size = if let Some(max_size) = max_size {

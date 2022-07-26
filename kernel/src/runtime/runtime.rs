@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use crate::memory::{Vma, VmaAllocator};
 use crate::runtime::{VmaIndex, ACTIVE_VMA};
 use crate::syscalls::ExternRef;
-use wasm::{ExternRef64, HeapKind, Instance, Module, ModuleError};
+use wasm::{ExternRef64, HeapKind, Instance, Module, ModuleError, RefType};
 
 use super::KoIndex;
 
@@ -20,8 +20,10 @@ type Area = Arc<Vma>;
 
 /// A context passed to runtime methods during module instantiation.
 pub struct InstantiationCtx {
+    /// The owned heaps.
     heaps: Vec<VmaIndex>,
-    table_idx: u32,
+    /// The first externref table is filled with references to owned objects.
+    is_first_externref_table: bool,
 }
 
 // ———————————————————————————————— Runtime ————————————————————————————————— //
@@ -52,7 +54,7 @@ unsafe impl wasm::Runtime for Runtime {
     fn create_context(&self) -> Self::Context {
         InstantiationCtx {
             heaps: Vec::new(),
-            table_idx: 0,
+            is_first_externref_table: true,
         }
     }
 
@@ -81,6 +83,7 @@ unsafe impl wasm::Runtime for Runtime {
         &self,
         min_size: u32,
         max_size: Option<u32>,
+        ty: RefType,
         ctx: &mut Self::Context,
     ) -> Result<Box<[u64]>, ModuleError> {
         let size = if let Some(max_size) = max_size {
@@ -90,8 +93,9 @@ unsafe impl wasm::Runtime for Runtime {
         } as usize;
         let mut table = vec![ExternRef::Invalid.to_u64(); size].into_boxed_slice();
 
-        ctx.table_idx += 1;
-        if ctx.table_idx == 1 {
+        if ctx.is_first_externref_table && ty == RefType::ExternRef {
+            ctx.is_first_externref_table = false;
+
             // Fill the first table with heap references
             for (idx, vma) in ctx.heaps.iter().enumerate() {
                 if idx >= table.len() {

@@ -140,9 +140,10 @@ impl fmt::Write for Writer {
 
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
-    without_interrupts(|| {
-        WRITER.lock().write_fmt(args).unwrap();
-    });
+    // TODO: redirect VGA output to serial
+    // without_interrupts(|| {
+    //     WRITER.lock().write_fmt(args).unwrap();
+    // });
 }
 
 #[cfg(test)]

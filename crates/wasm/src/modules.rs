@@ -6,6 +6,7 @@ use crate::traits::{
     ImportIndex, RawFuncPtr, Reloc, TableIndex, TableInfo,
 };
 use crate::traits::{ItemRef, Module, VMContextLayout};
+use crate::RefType;
 use collections::{FrozenMap, HashMap, PrimaryMap};
 
 // —————————————————————————————————— VMCS —————————————————————————————————— //
@@ -313,6 +314,7 @@ impl NativeModuleBuilder {
             .collect::<Vec<u64>>();
         let idx = self.tables.push(TableInfo::Native {
             ptr: table.into_boxed_slice(),
+            ty: RefType::ExternRef,
         });
         self.exported_names.insert(name, ItemRef::Table(idx));
         self

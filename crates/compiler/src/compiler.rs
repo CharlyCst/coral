@@ -3,12 +3,12 @@ use alloc::vec::Vec;
 
 use cranelift_codegen::binemit::Reloc as CraneliftRelocKind;
 use cranelift_codegen::{ir, isa, settings, CodegenError, MachReloc};
-use cranelift_wasm::{translate_module, GlobalInit, ModuleTranslationState, WasmError};
+use cranelift_wasm::{translate_module, GlobalInit, ModuleTranslationState, WasmError, WasmType};
 
 use collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
 use wasm::{
     DataSegment, FuncIndex, FuncInfo, GlobIndex, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind,
-    ItemRef, ModuleInfo, Reloc, RelocKind, TableInfo, WasmModule,
+    ItemRef, ModuleInfo, RefType, Reloc, RelocKind, TableInfo, WasmModule,
 };
 
 use crate::env;
@@ -140,15 +140,18 @@ impl Compiler for X86_64Compiler {
             // TODO: keep type information into `TableInfo`
             let names = table.export_names;
             let table = table.entity;
+            let ty = as_ref_type(table.wasm_ty).expect("Table of non-reference type");
             let table = if let Some(import_info) = imported_tables[table_idx].take() {
                 TableInfo::Imported {
                     module: import_info.module,
                     name: import_info.name,
+                    ty,
                 }
             } else {
                 TableInfo::Owned {
                     min_size: table.minimum,
                     max_size: table.maximum,
+                    ty,
                 }
             };
             let table_idx = tables.push(table);
@@ -312,5 +315,13 @@ impl RelocationHandler {
             kind,
             addend,
         });
+    }
+}
+
+fn as_ref_type(ty: WasmType) -> Option<RefType> {
+    match ty {
+        WasmType::FuncRef => Some(RefType::FuncRef),
+        WasmType::ExternRef => Some(RefType::ExternRef),
+        _ => None,
     }
 }

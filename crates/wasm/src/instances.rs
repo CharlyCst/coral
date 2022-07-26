@@ -195,12 +195,16 @@ impl<Area: MemoryArea> Instance<Area> {
 
         // Allocate tables
         let tables = module.tables().try_map(|table_info| match table_info {
-            crate::TableInfo::Owned { min_size, max_size } => {
-                let table = runtime.alloc_table(*min_size, *max_size, &mut ctx)?;
+            crate::TableInfo::Owned {
+                min_size,
+                max_size,
+                ty,
+            } => {
+                let table = runtime.alloc_table(*min_size, *max_size, *ty, &mut ctx)?;
                 Ok(Table::Owned(table))
             }
-            crate::TableInfo::Native { ptr } => Ok(Table::Owned(ptr.clone())),
-            crate::TableInfo::Imported { module, name } => {
+            crate::TableInfo::Native { ptr, .. } => Ok(Table::Owned(ptr.clone())),
+            crate::TableInfo::Imported { module, name, .. } => {
                 // Look for the corresponding module
                 let instance = &imports[*module];
                 let table_ref = instance
