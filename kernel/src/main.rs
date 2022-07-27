@@ -27,9 +27,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     kernel::init();
     let allocator =
         unsafe { kernel::init_memory(boot_info).expect("Failed to initialize allocator") };
-    let runtime = Runtime::new(allocator);
+
+    // Run tests and exit when called with `cargo test`
+    #[cfg(test)]
+    test_main();
 
     // Initialize the Coral native module
+    let runtime = Runtime::new(allocator);
     let vga_buffer =
         unsafe { Vma::from_raw(NonNull::new(0xb8000 as *mut u8).unwrap(), 80 * 25 * 2) };
     let vga_idx = ACTIVE_VMA.insert(Arc::new(vga_buffer)).into_externref();
@@ -64,9 +68,6 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 
     kprintln!("Userboot: {}", result);
-
-    #[cfg(test)]
-    test_main();
 
     kernel::hlt_loop();
 }
