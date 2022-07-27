@@ -26,7 +26,6 @@ pub mod memory;
 pub mod qemu;
 pub mod serial;
 pub mod syscalls;
-pub mod vga;
 pub mod runtime;
 
 pub use memory::init as init_memory;
@@ -77,15 +76,15 @@ where
     T: Fn(),
 {
     fn run(&self) {
-        serial_print!("{}...\t", core::any::type_name::<T>());
+        debug_print!("{}...\t", core::any::type_name::<T>());
         self();
-        serial_println!("[ok]");
+        debug_println!("[ok]");
     }
 }
 
 /// A custom test runner for the kernel.
 pub fn test_runner(tests: &[&dyn Testable]) {
-    serial_println!("Running {} tests", tests.len());
+    debug_println!("Running {} tests", tests.len());
     for test in tests {
         test.run();
     }
@@ -101,8 +100,8 @@ fn panic(info: &PanicInfo) -> ! {
 
 /// A custom panic handler for kernel testing.
 pub fn test_panic_handler(info: &PanicInfo) -> ! {
-    serial_println!("[failed]\n");
-    serial_println!("Error: {}\n", info);
+    debug_println!("[failed]\n");
+    debug_println!("Error: {}\n", info);
     qemu::exit(qemu::ExitCode::Failed);
     hlt_loop();
 }

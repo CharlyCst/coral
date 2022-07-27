@@ -6,7 +6,7 @@
 
 use core::panic::PanicInfo;
 use kernel::qemu;
-use kernel::{serial_print, serial_println};
+use kernel::{debug_print, debug_println};
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
@@ -15,10 +15,10 @@ pub extern "C" fn _start() -> ! {
     kernel::hlt_loop();
 }
 pub fn test_runner(tests: &[&dyn Fn()]) {
-    serial_println!("Running {} tests", tests.len());
+    debug_println!("Running {} tests", tests.len());
     for test in tests {
         test();
-        serial_println!("[test did not panic]");
+        debug_println!("[test did not panic]");
         qemu::exit(qemu::ExitCode::Failed);
     }
     qemu::exit(qemu::ExitCode::Success);
@@ -26,13 +26,13 @@ pub fn test_runner(tests: &[&dyn Fn()]) {
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    serial_println!("[ok]");
+    debug_println!("[ok]");
     qemu::exit(qemu::ExitCode::Success);
     kernel::hlt_loop();
 }
 
 #[test_case]
 fn should_fail() {
-    serial_print!("should_panic::should_fail...\t");
+    debug_print!("should_panic::should_fail...\t");
     assert_eq!(0, 1);
 }

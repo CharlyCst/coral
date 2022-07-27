@@ -14,17 +14,32 @@ lazy_static! {
 }
 
 #[macro_export]
-macro_rules! serial_print {
+macro_rules! debug_print {
     ($($args:tt)*) => {
-        $crate::serial::_print(format_args!($($args)*));
+        $crate::serial::_print(core::format_args!($($args)*));
     };
 }
 
 #[macro_export]
-macro_rules! serial_println {
-    () => ($crate::serial_print!("\n"));
-    ($fmt:expr) => ($crate::serial_print!(concat!($fmt, "\n")));
-    ($fmt:expr, $($arg:tt)*) => ($crate::serial_print!(concat!($fmt, "\n"), $($arg)*));
+macro_rules! debug_println {
+    () => ($crate::debug_print!("\n"));
+    ($fmt:expr) => ($crate::debug_print!(concat!($fmt, "\n")));
+    ($fmt:expr, $($arg:tt)*) => ($crate::debug_print!(concat!($fmt, "\n"), $($arg)*));
+}
+
+#[macro_export]
+macro_rules! kprint {
+    ($($arg:tt)*) => {
+        if cfg! (not(test)) {
+            $crate::serial::_print(core::format_args!($($arg)*))
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! kprintln {
+    () => ($crate::print!("\n"));
+    ($($arg:tt)*) => ($crate::kprint!("{}\n", core::format_args!($($arg)*)))
 }
 
 #[doc(hidden)]
