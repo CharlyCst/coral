@@ -1,10 +1,6 @@
 # See https://github.com/casey/just
 # TLDR: think makefile, but use `just` instead of `make`
 
-alias h := help
-alias t := test
-alias r := run
-
 # Print a list of recipies
 help:
     @just --list --list-heading $'Coral recipies:\n'
@@ -21,3 +17,13 @@ test:
 # Run Coral
 run:
     cd ./kernel && cargo run
+
+# Build and install userland
+userland:
+    # Build userboot
+    cd ./userland/userboot && cargo build --release
+    cargo run -p coral-bindgen -- \
+        -o kernel/wasm/userboot.wasm \
+        target/wasm32-unknown-unknown/release/userboot.wasm \
+        userland/userboot/bindgen.toml
+

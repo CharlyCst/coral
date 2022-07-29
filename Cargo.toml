@@ -1,8 +1,15 @@
 [workspace]
 resolver = '2'
 members = [
+    # The kernel itself
+    "kernel",
+
+    # Userspace programs
+    "userland/userboot",
+
+    # Dependencies
     "crates/collections",
     "crates/compiler",
     "crates/wasm",
-    "kernel"
+    "crates/bindgen"
 ]

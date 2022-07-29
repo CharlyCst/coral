@@ -205,7 +205,11 @@ install-stage = 1
 # Defaults to `host`. If you set this explicitly, you likely want to add all
 # host triples to this list as well in order for those host toolchains to be
 # able to compile programs for their native target.
-target = ["{{host-architecture}}", "x86_64-coral-unknown-kernel"]
+target = [
+    "{{host-architecture}}",
+    "x86_64-coral-unknown-kernel",
+    "wasm32-unknown-unknown"
+]
 
 # Use this directory to store build artifacts.
 # You can use "$ROOT" to indicate the root of the git repository.
