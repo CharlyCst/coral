@@ -61,6 +61,14 @@ following command by those used in `config.toml`:
 rustup toolchain link coral {{path-to-rust-folder}}/build/{{host-architecture}}/stage1/
 ```
 
+To have access to standard rust tools (e.g. `rustfmt`), they must be copied into
+the stage 1 folder:
+
+```sh
+cp {{path-to-rust-folder}}/build/{{host-architecture}}/stage1-tools-bin/* \
+   {{path-to-rust-folder}}/build/{{host-architecture}}/stage1/bin/
+```
+
 It is then possible to check if the compiler was correctly installed with:
 
 ```sh
