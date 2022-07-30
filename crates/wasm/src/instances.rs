@@ -68,6 +68,9 @@ pub struct Instance<Area> {
     /// The imported instances.
     imports: FrozenMap<ImportIndex, Instance<Area>>,
 
+    /// The start function, if any.
+    start: Option<FuncIndex>,
+
     /// The memory region containing the code
     code: Area,
 }
@@ -244,6 +247,7 @@ impl<Area: MemoryArea> Instance<Area> {
         // Create instance
         let mut instance = Self {
             vmctx: VMContext::empty(module.vmctx_layout()),
+            start: module.start(),
             imports,
             items,
             heaps,
@@ -257,6 +261,11 @@ impl<Area: MemoryArea> Instance<Area> {
         instance.init_vmctx();
 
         Ok(instance)
+    }
+
+    /// Returns the index of the start function, if any.
+    pub fn get_start(&self) -> Option<FuncIndex> {
+        self.start.clone()
     }
 
     /// Returns the address of a function exported by the instance.

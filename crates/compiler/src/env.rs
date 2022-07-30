@@ -123,6 +123,8 @@ pub struct ModuleInfo {
     pub modules: PrimaryMap<ImportIndex, String>,
     /// The list of data segments to initialize.
     pub segments: Vec<DataSegment>,
+    /// The start function, to be called after memory and table initialization.
+    pub start: Option<FuncIndex>,
     /// The number of imported funcs. The defined functions goes after the imported ones.
     nb_imported_funcs: usize,
     /// Configuration of the target
@@ -218,6 +220,7 @@ impl ModuleEnvironment {
             imported_tables: SecondaryMap::new(),
             modules: PrimaryMap::new(),
             segments: Vec::new(),
+            start: None,
             nb_imported_funcs: 0,
             target_config,
         };
@@ -372,8 +375,9 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
         Ok(())
     }
 
-    fn declare_start_func(&mut self, _index: cw::FuncIndex) -> cw::WasmResult<()> {
-        todo!()
+    fn declare_start_func(&mut self, index: cw::FuncIndex) -> cw::WasmResult<()> {
+        self.info.start = Some(index);
+        Ok(())
     }
 
     fn declare_table_elements(

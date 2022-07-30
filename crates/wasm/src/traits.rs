@@ -255,6 +255,7 @@ pub type ModuleResult<T> = Result<T, ModuleError>;
 pub trait Module {
     type VMContext: VMContextLayout + Clone + 'static;
 
+    fn start(&self) -> Option<FuncIndex>;
     fn code(&self) -> &[u8];
     fn heaps(&self) -> &FrozenMap<HeapIndex, HeapInfo>;
     fn tables(&self) -> &FrozenMap<TableIndex, TableInfo>;

@@ -70,6 +70,7 @@ pub struct ModuleInfo {
     globs: FrozenMap<GlobIndex, GlobInfo>,
     imports: FrozenMap<ImportIndex, String>,
     segments: Vec<DataSegment>,
+    start: Option<FuncIndex>,
 }
 
 impl ModuleInfo {
@@ -80,6 +81,7 @@ impl ModuleInfo {
         globs: FrozenMap<GlobIndex, GlobInfo>,
         imports: FrozenMap<ImportIndex, String>,
         segments: Vec<DataSegment>,
+        start: Option<FuncIndex>,
     ) -> Self {
         Self {
             exported_items: HashMap::new(),
@@ -89,6 +91,7 @@ impl ModuleInfo {
             globs,
             imports,
             segments,
+            start,
         }
     }
 
@@ -150,6 +153,7 @@ pub struct WasmModule {
     globs: FrozenMap<GlobIndex, GlobInfo>,
     imports: FrozenMap<ImportIndex, String>,
     segments: Vec<DataSegment>,
+    start: Option<FuncIndex>,
     code: Vec<u8>,
     relocs: Vec<Reloc>,
     vmctx_layout: SimpleVMContextLayout,
@@ -198,6 +202,7 @@ impl WasmModule {
             globs: info.globs,
             imports: info.imports,
             segments: info.segments,
+            start: info.start,
             code,
             relocs,
             vmctx_layout,
@@ -207,6 +212,10 @@ impl WasmModule {
 
 impl Module for WasmModule {
     type VMContext = SimpleVMContextLayout;
+
+    fn start(&self) -> Option<FuncIndex> {
+        self.start.clone()
+    }
 
     fn code(&self) -> &[u8] {
         &self.code
@@ -331,6 +340,10 @@ pub struct NativeModule {
 
 impl Module for NativeModule {
     type VMContext = SimpleVMContextLayout;
+
+    fn start(&self) -> Option<FuncIndex> {
+        None
+    }
 
     fn code(&self) -> &[u8] {
         &EMPTY_CODE

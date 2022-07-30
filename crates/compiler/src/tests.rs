@@ -25,6 +25,21 @@ impl ExternRef64 for ExternRef {
 }
 
 #[test]
+fn start() {
+    let module = compile(
+        r#"
+        (module
+            (func $not_start)
+            (func $start)
+            (start $start)
+        )
+    "#,
+    );
+    assert!(module.start().is_some());
+    assert_eq!(module.start().unwrap().as_u32(), 1);
+}
+
+#[test]
 fn the_answer() {
     let module = compile(
         r#"

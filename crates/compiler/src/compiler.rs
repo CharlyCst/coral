@@ -193,7 +193,12 @@ impl Compiler for X86_64Compiler {
             })
         }
 
-        let mut mod_info = ModuleInfo::new(funcs, heaps, tables, globs, modules, segments);
+        // Find start function, if any
+        let start = module_info
+            .start
+            .map(|idx| FuncIndex::from_u32(idx.as_u32()));
+
+        let mut mod_info = ModuleInfo::new(funcs, heaps, tables, globs, modules, segments, start);
         for (func_idx, names) in funcs_names.iter() {
             mod_info.export_func(func_idx, names);
         }
