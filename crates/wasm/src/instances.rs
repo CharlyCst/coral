@@ -268,6 +268,31 @@ impl<Area: MemoryArea> Instance<Area> {
         self.start.clone()
     }
 
+    /// Returns the address of the given function.
+    pub fn get_func_addr_by_index(&self, index: FuncIndex) -> *const u8 {
+        let func = &self.funcs[index];
+
+        match func {
+            Func::Owned { offset } => {
+                let addr = self.code.as_ptr();
+
+                // SAFETY: We rely on the function offset being correct here, in which case the offset is
+                // less or equal to `code.len()` and points to the start of the intended function.
+                unsafe { addr.offset(*offset as isize) }
+            }
+            Func::Imported { .. } => todo!(),
+            Func::Native { ptr } => ptr.as_ptr(),
+        }
+    }
+
+    /// Returns the index of a function exported by the instance.
+    pub fn get_func_index_by_name<'a, 'b>(&'a self, name: &'b str) -> Option<FuncIndex> {
+        match self.items.get(name) {
+            Some(ItemRef::Func(index)) => Some(*index),
+            _ => None,
+        }
+    }
+
     /// Returns the address of a function exported by the instance.
     pub fn get_func_addr_by_name<'a, 'b>(&'a self, name: &'b str) -> Option<*const u8> {
         let name = self.items.get(name)?;

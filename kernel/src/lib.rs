@@ -27,6 +27,8 @@ pub mod qemu;
 pub mod serial;
 pub mod syscalls;
 pub mod runtime;
+pub mod scheduler;
+pub mod wasm;
 
 pub use memory::init as init_memory;
 

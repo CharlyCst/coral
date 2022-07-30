@@ -53,21 +53,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         .instantiate(&user_module, vec![("coral", coral_instance)])
         .expect("Failed to instantiate userboot");
     let userboot_init = userboot
-        .get_func_addr_by_name("init")
+        .get_func_index_by_name("init")
         .expect("Failed to retrieve 'init' from userboot instance");
-    let vmctx = userboot.get_vmctx_ptr();
+    let component = Arc::new(kernel::wasm::Component::new(userboot));
 
-    let result: u32;
-    unsafe {
-        asm!(
-            "call {entry_point}",
-            entry_point = in(reg) userboot_init,
-            in("rdi") vmctx,
-            out("rax") result,
-        );
-    }
-
-    kprintln!("Userboot: {}", result);
+    let mut scheduler = kernel::scheduler::Scheduler::new();
+    scheduler.enqueue(component, userboot_init);
+    scheduler.run();
 
     kernel::hlt_loop();
 }
