@@ -3,12 +3,15 @@ use alloc::vec::Vec;
 
 use cranelift_codegen::binemit::Reloc as CraneliftRelocKind;
 use cranelift_codegen::{ir, isa, settings, CodegenError, MachReloc};
-use cranelift_wasm::{translate_module, GlobalInit, ModuleTranslationState, WasmError, WasmType};
+use cranelift_wasm::{
+    translate_module, GlobalInit, ModuleTranslationState, WasmError, WasmFuncType, WasmType,
+};
 
 use collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
 use wasm::{
-    DataSegment, FuncIndex, FuncInfo, GlobIndex, GlobInfo, GlobInit, HeapIndex, HeapInfo, HeapKind,
-    ItemRef, ModuleInfo, RefType, Reloc, RelocKind, TableInfo, WasmModule,
+    DataSegment, FuncIndex, FuncInfo, FuncType, GlobIndex, GlobInfo, GlobInit, HeapIndex, HeapInfo,
+    HeapKind, ItemRef, ModuleInfo, RefType, Reloc, RelocKind, TableInfo, TypeIndex, ValueType,
+    WasmModule,
 };
 
 use crate::env;
@@ -81,20 +84,30 @@ impl Compiler for X86_64Compiler {
         let mut imported_globs = module_info.imported_globs;
         let modules = FrozenMap::freeze(module_info.modules);
 
+        // Build the type info
+        let mut types = PrimaryMap::with_capacity(module_info.types.len());
+        for (_ty_idx, ty) in module_info.types {
+            types.push(as_func_type(ty));
+        }
+        let types = FrozenMap::freeze(types);
+
         // Build the functions info
         let mut funcs = PrimaryMap::with_capacity(module_info.funcs.len());
         let mut funcs_names = SecondaryMap::new();
         for (func_idx, func_names) in module_info.funcs {
             // We move out with `take` to avoid cloning the name
+            let ty = TypeIndex::from_u32(func_names.entity.as_u32());
             let func = if let Some(import_info) = imported_funcs[func_idx].take() {
                 FuncInfo::Imported {
                     module: import_info.module,
                     name: import_info.name,
+                    ty,
                 }
             } else {
                 FuncInfo::Owned {
                     // WARNING: The offset **must** be set once known!
                     offset: 0,
+                    ty,
                 }
             };
             let func_idx = funcs.push(func);
@@ -198,7 +211,8 @@ impl Compiler for X86_64Compiler {
             .start
             .map(|idx| FuncIndex::from_u32(idx.as_u32()));
 
-        let mut mod_info = ModuleInfo::new(funcs, heaps, tables, globs, modules, segments, start);
+        let mut mod_info =
+            ModuleInfo::new(funcs, types, heaps, tables, globs, modules, segments, start);
         for (func_idx, names) in funcs_names.iter() {
             mod_info.export_func(func_idx, names);
         }
@@ -323,10 +337,35 @@ impl RelocationHandler {
     }
 }
 
+fn as_type(ty: WasmType) -> ValueType {
+    match ty {
+        WasmType::I32 => ValueType::I32,
+        WasmType::I64 => ValueType::I64,
+        WasmType::F32 => ValueType::F32,
+        WasmType::F64 => ValueType::F64,
+        WasmType::V128 => todo!(),
+        WasmType::FuncRef => ValueType::FuncRef,
+        WasmType::ExternRef => ValueType::ExternRef,
+    }
+}
+
 fn as_ref_type(ty: WasmType) -> Option<RefType> {
     match ty {
         WasmType::FuncRef => Some(RefType::FuncRef),
         WasmType::ExternRef => Some(RefType::ExternRef),
         _ => None,
     }
+}
+
+fn as_func_type(func_ty: WasmFuncType) -> FuncType {
+    let mut args = Vec::with_capacity(func_ty.params().len());
+    let mut ret = Vec::with_capacity(func_ty.returns().len());
+    for ty in func_ty.params() {
+        args.push(as_type(*ty));
+    }
+    for ty in func_ty.returns() {
+        ret.push(as_type(*ty));
+    }
+
+    FuncType::new(args, ret)
 }

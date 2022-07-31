@@ -3,10 +3,11 @@ use crate::alloc::string::String;
 use crate::alloc::vec::Vec;
 
 use crate::traits::{
-    DataSegment, FuncIndex, FuncInfo, GlobInfo, GlobInit, HeapIndex, HeapInfo, ImportIndex,
-    ItemRef, RawFuncPtr, RelocKind, TableIndex,
+    DataSegment, FuncIndex, FuncInfo, FuncPtr, GlobIndex, GlobInfo, GlobInit, HeapIndex, HeapInfo,
+    ImportIndex, ItemRef, MemoryArea, Module, ModuleError, ModuleResult, Reloc, RelocKind, Runtime,
+    TableIndex, TypeIndex,
 };
-use crate::traits::{GlobIndex, MemoryArea, Module, ModuleError, ModuleResult, Reloc, Runtime};
+use crate::types::FuncType;
 use crate::vmctx::VMContext;
 use collections::{FrozenMap, HashMap};
 
@@ -34,9 +35,29 @@ enum Table {
 }
 
 enum Func {
-    Owned { offset: u32 },
-    Imported { from: ImportIndex, index: FuncIndex },
-    Native { ptr: RawFuncPtr },
+    Owned {
+        offset: u32,
+        ty: TypeIndex,
+    },
+    Imported {
+        from: ImportIndex,
+        index: FuncIndex,
+        ty: TypeIndex,
+    },
+    Native {
+        ptr: FuncPtr,
+        ty: TypeIndex,
+    },
+}
+
+impl Func {
+    pub fn ty_index(&self) -> TypeIndex {
+        match self {
+            Func::Owned { ty, .. } => *ty,
+            Func::Imported { ty, .. } => *ty,
+            Func::Native { ty, .. } => *ty,
+        }
+    }
 }
 
 enum Glob {
@@ -68,6 +89,9 @@ pub struct Instance<Area> {
     /// The imported instances.
     imports: FrozenMap<ImportIndex, Instance<Area>>,
 
+    /// The function types used by the instance.
+    types: FrozenMap<TypeIndex, FuncType>,
+
     /// The start function, if any.
     start: Option<FuncIndex>,
 
@@ -86,6 +110,9 @@ impl<Area: MemoryArea> Instance<Area> {
         Mod: Module,
     {
         let mut ctx = runtime.create_context();
+        let items = module.public_items().clone();
+        let types = module.types().clone();
+
         let mut import_from = import_from
             .into_iter()
             .map(|x| Some(x))
@@ -105,9 +132,12 @@ impl<Area: MemoryArea> Instance<Area> {
 
         // Prepare functions
         let funcs = module.funcs().try_map(|func_info| match func_info {
-            FuncInfo::Owned { offset } => Ok(Func::Owned { offset: *offset }),
-            FuncInfo::Native { ptr } => Ok(Func::Native { ptr: *ptr }),
-            FuncInfo::Imported { module, name } => {
+            FuncInfo::Owned { offset, ty } => Ok(Func::Owned {
+                offset: *offset,
+                ty: *ty,
+            }),
+            FuncInfo::Native { ptr, ty } => Ok(Func::Native { ptr: *ptr, ty: *ty }),
+            FuncInfo::Imported { module, name, ty } => {
                 // Look for the corresponding module
                 let instance = &imports[*module];
                 let func_ref = instance
@@ -117,12 +147,18 @@ impl<Area: MemoryArea> Instance<Area> {
                     .as_func()
                     .ok_or(ModuleError::FailedToInstantiate)?;
 
-                // TODO: typecheck the function here
-                let _func = &instance.funcs[func_ref];
+                // Typecheck function
+                let my_type = &types[*ty];
+                let other_func = &instance.funcs[func_ref];
+                let other_type = &instance.types[other_func.ty_index()];
+                if !my_type.eq(other_type) {
+                    return Err(ModuleError::TypeError);
+                }
 
                 Ok(Func::Imported {
                     from: *module,
                     index: func_ref,
+                    ty: *ty,
                 })
             }
         })?;
@@ -223,9 +259,6 @@ impl<Area: MemoryArea> Instance<Area> {
                 })
             }
         })?;
-
-        let items = module.public_items().clone();
-
         // Allocate code
         let mod_code = module.code();
         let relocs = module.relocs();
@@ -254,6 +287,7 @@ impl<Area: MemoryArea> Instance<Area> {
             tables,
             globs,
             funcs,
+            types,
             code,
         };
 
@@ -273,7 +307,7 @@ impl<Area: MemoryArea> Instance<Area> {
         let func = &self.funcs[index];
 
         match func {
-            Func::Owned { offset } => {
+            Func::Owned { offset, .. } => {
                 let addr = self.code.as_ptr();
 
                 // SAFETY: We rely on the function offset being correct here, in which case the offset is
@@ -281,7 +315,7 @@ impl<Area: MemoryArea> Instance<Area> {
                 unsafe { addr.offset(*offset as isize) }
             }
             Func::Imported { .. } => todo!(),
-            Func::Native { ptr } => ptr.as_ptr(),
+            Func::Native { ptr, .. } => ptr.as_ptr(),
         }
     }
 
@@ -299,7 +333,7 @@ impl<Area: MemoryArea> Instance<Area> {
         let func = self.get_func_by_ref(*name)?;
 
         match func {
-            Func::Owned { offset } => {
+            Func::Owned { offset, .. } => {
                 let addr = self.code.as_ptr();
 
                 // SAFETY: We rely on the function offset being correct here, in which case the offset is
@@ -307,7 +341,7 @@ impl<Area: MemoryArea> Instance<Area> {
                 unsafe { Some(addr.offset(*offset as isize)) }
             }
             Func::Imported { .. } => todo!(),
-            Func::Native { ptr } => Some(ptr.as_ptr()),
+            Func::Native { ptr, .. } => Some(ptr.as_ptr()),
         }
     }
 
@@ -362,12 +396,12 @@ impl<Area: MemoryArea> Instance<Area> {
         for reloc in relocs {
             let base = match reloc.item {
                 ItemRef::Func(func) => match &funcs[func] {
-                    Func::Owned { offset } => code.as_ptr().wrapping_add(*offset as usize),
-                    Func::Imported { from, index } => {
+                    Func::Owned { offset, .. } => code.as_ptr().wrapping_add(*offset as usize),
+                    Func::Imported { from, index, .. } => {
                         let instance = &imports[*from];
                         instance.get_func_ptr(*index)
                     }
-                    Func::Native { ptr } => ptr.as_ptr(),
+                    Func::Native { ptr, .. } => ptr.as_ptr(),
                 },
                 // Only functions are supported by relocations
                 _ => return Err(ModuleError::FailedToInstantiate),
@@ -405,12 +439,12 @@ impl<Area: MemoryArea> Instance<Area> {
     /// Imported functions are resolved through recursive lookups.
     fn get_func_ptr(&self, func: FuncIndex) -> *const u8 {
         match &self.funcs[func] {
-            Func::Owned { offset } => self.code.as_ptr().wrapping_add(*offset as usize),
-            Func::Imported { from, index } => {
+            Func::Owned { offset, .. } => self.code.as_ptr().wrapping_add(*offset as usize),
+            Func::Imported { from, index, .. } => {
                 let instance = &self.imports[*from];
                 instance.get_func_ptr(*index)
             }
-            Func::Native { ptr } => ptr.as_ptr(),
+            Func::Native { ptr, .. } => ptr.as_ptr(),
         }
     }
 
@@ -504,6 +538,7 @@ impl<Area: MemoryArea> Instance<Area> {
             ItemRef::Table(idx) => Item::Table(&self.tables[idx]),
             ItemRef::Glob(_) => todo!(),
             ItemRef::Import(_) => todo!(),
+            ItemRef::Type(_) => todo!(),
         }
     }
 }

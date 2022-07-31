@@ -2,11 +2,11 @@ use crate::alloc::string::{String, ToString};
 use crate::alloc::vec::Vec;
 
 use crate::traits::{
-    DataSegment, ExternRef64, FuncIndex, FuncInfo, GlobIndex, GlobInfo, HeapIndex, HeapInfo,
-    ImportIndex, RawFuncPtr, Reloc, TableIndex, TableInfo,
+    DataSegment, ExternRef64, FuncIndex, FuncInfo, FuncPtr, GlobIndex, GlobInfo, HeapIndex,
+    HeapInfo, ImportIndex, Reloc, TableIndex, TableInfo,
 };
 use crate::traits::{ItemRef, Module, VMContextLayout};
-use crate::RefType;
+use crate::{FuncType, RefType, TypeIndex};
 use collections::{FrozenMap, HashMap, PrimaryMap};
 
 // —————————————————————————————————— VMCS —————————————————————————————————— //
@@ -65,6 +65,7 @@ impl VMContextLayout for SimpleVMContextLayout {
 pub struct ModuleInfo {
     exported_items: HashMap<String, ItemRef>,
     funcs: FrozenMap<FuncIndex, FuncInfo>,
+    types: FrozenMap<TypeIndex, FuncType>,
     heaps: FrozenMap<HeapIndex, HeapInfo>,
     tables: FrozenMap<TableIndex, TableInfo>,
     globs: FrozenMap<GlobIndex, GlobInfo>,
@@ -76,6 +77,7 @@ pub struct ModuleInfo {
 impl ModuleInfo {
     pub fn new(
         funcs: FrozenMap<FuncIndex, FuncInfo>,
+        types: FrozenMap<TypeIndex, FuncType>,
         heaps: FrozenMap<HeapIndex, HeapInfo>,
         tables: FrozenMap<TableIndex, TableInfo>,
         globs: FrozenMap<GlobIndex, GlobInfo>,
@@ -86,6 +88,7 @@ impl ModuleInfo {
         Self {
             exported_items: HashMap::new(),
             funcs,
+            types,
             heaps,
             tables,
             globs,
@@ -148,6 +151,7 @@ impl ModuleInfo {
 pub struct WasmModule {
     exported_names: HashMap<String, ItemRef>,
     funcs: FrozenMap<FuncIndex, FuncInfo>,
+    types: FrozenMap<TypeIndex, FuncType>,
     heaps: FrozenMap<HeapIndex, HeapInfo>,
     tables: FrozenMap<TableIndex, TableInfo>,
     globs: FrozenMap<GlobIndex, GlobInfo>,
@@ -197,6 +201,7 @@ impl WasmModule {
         Self {
             exported_names: info.exported_items,
             funcs: info.funcs,
+            types: info.types,
             heaps: info.heaps,
             tables: info.tables,
             globs: info.globs,
@@ -233,12 +238,20 @@ impl Module for WasmModule {
         &self.funcs
     }
 
+    fn types(&self) -> &FrozenMap<crate::TypeIndex, crate::FuncType> {
+        &self.types
+    }
+
     fn globs(&self) -> &FrozenMap<GlobIndex, GlobInfo> {
         &self.globs
     }
 
     fn imports(&self) -> &FrozenMap<ImportIndex, String> {
         &self.imports
+    }
+
+    fn data_segments(&self) -> &[DataSegment] {
+        &self.segments
     }
 
     fn relocs(&self) -> &[Reloc] {
@@ -251,10 +264,6 @@ impl Module for WasmModule {
 
     fn vmctx_layout(&self) -> &Self::VMContext {
         &self.vmctx_layout
-    }
-
-    fn data_segments(&self) -> &[DataSegment] {
-        &self.segments
     }
 }
 
@@ -271,6 +280,7 @@ static EMPTY_RELOCS: [Reloc; 0] = [];
 pub struct NativeModuleBuilder {
     exported_names: HashMap<String, ItemRef>,
     funcs: PrimaryMap<FuncIndex, FuncInfo>,
+    types: PrimaryMap<TypeIndex, FuncType>,
     tables: PrimaryMap<TableIndex, TableInfo>,
 }
 
@@ -280,6 +290,7 @@ impl NativeModuleBuilder {
         Self {
             exported_names: HashMap::new(),
             funcs: PrimaryMap::new(),
+            types: PrimaryMap::new(),
             tables: PrimaryMap::new(),
         }
     }
@@ -296,6 +307,7 @@ impl NativeModuleBuilder {
         NativeModule {
             exported_names: self.exported_names,
             funcs: FrozenMap::freeze(self.funcs),
+            types: FrozenMap::freeze(self.types),
             tables: FrozenMap::freeze(self.tables),
             vmctx_layout,
         }
@@ -307,8 +319,9 @@ impl NativeModuleBuilder {
     /// arguments from Wasm instances!
     ///
     /// TODO: add typecheck (i.e. ask or infer the equivalent Wasm type of the function).
-    pub unsafe fn add_func(mut self, name: String, func: RawFuncPtr) -> Self {
-        let idx = self.funcs.push(FuncInfo::Native { ptr: func });
+    pub unsafe fn add_func(mut self, name: String, func: FuncPtr, ty: FuncType) -> Self {
+        let ty = self.types.push(ty);
+        let idx = self.funcs.push(FuncInfo::Native { ptr: func, ty });
         self.exported_names.insert(name, ItemRef::Func(idx));
         self
     }
@@ -334,6 +347,7 @@ impl NativeModuleBuilder {
 pub struct NativeModule {
     exported_names: HashMap<String, ItemRef>,
     funcs: FrozenMap<FuncIndex, FuncInfo>,
+    types: FrozenMap<TypeIndex, FuncType>,
     tables: FrozenMap<TableIndex, TableInfo>,
     vmctx_layout: SimpleVMContextLayout,
 }
@@ -361,12 +375,20 @@ impl Module for NativeModule {
         &self.funcs
     }
 
+    fn types(&self) -> &FrozenMap<TypeIndex, FuncType> {
+        &self.types
+    }
+
     fn globs(&self) -> &FrozenMap<GlobIndex, GlobInfo> {
         &EMPTY_GLOBS
     }
 
     fn imports(&self) -> &FrozenMap<ImportIndex, String> {
         &EMPTY_IMPORTS
+    }
+
+    fn data_segments(&self) -> &[DataSegment] {
+        &EMPTY_SEGMENT
     }
 
     fn relocs(&self) -> &[Reloc] {
@@ -379,9 +401,5 @@ impl Module for NativeModule {
 
     fn vmctx_layout(&self) -> &Self::VMContext {
         &self.vmctx_layout
-    }
-
-    fn data_segments(&self) -> &[DataSegment] {
-        &EMPTY_SEGMENT
     }
 }

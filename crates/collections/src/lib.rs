@@ -22,6 +22,7 @@ pub use hashbrown::HashMap;
 ///
 /// The values can still be modified, but the set of key is fixed. A new FrozenMap can be created
 /// either by consuming a PrimaryMap, or by mapping another FrozenMap.
+#[derive(Debug, Clone)]
 pub struct FrozenMap<K, V> {
     elems: Vec<V>,
     unused: PhantomData<K>,

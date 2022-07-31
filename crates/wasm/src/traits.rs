@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 
 use collections::{entity_impl, FrozenMap, HashMap};
 
-use crate::types::RefType;
+use crate::types::{FuncType, RefType};
 
 // ——————————————————————————————— Allocator ———————————————————————————————— //
 
@@ -66,6 +66,10 @@ entity_impl!(GlobIndex);
 pub struct ImportIndex(u32);
 entity_impl!(ImportIndex);
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct TypeIndex(u32);
+entity_impl!(TypeIndex);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(dead_code)]
 pub enum ItemRef {
@@ -74,6 +78,7 @@ pub enum ItemRef {
     Table(TableIndex),
     Glob(GlobIndex),
     Import(ImportIndex),
+    Type(TypeIndex),
 }
 
 impl ItemRef {
@@ -107,11 +112,13 @@ impl ItemRef {
 }
 
 /// A raw function pointer.
-#[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct RawFuncPtr(NonNull<u8>);
+#[repr(transparent)]
+pub struct FuncPtr {
+    ptr: NonNull<u8>,
+}
 
-impl RawFuncPtr {
+impl FuncPtr {
     /// Creates a raw function pointer.
     ///
     /// SAFETY: Note that the pointer might be used to call the function from Wasm Instances, and
@@ -120,11 +127,13 @@ impl RawFuncPtr {
     /// Note that the calling convention might be subject to change, there are no stability
     /// guarantees yet!
     pub unsafe fn new(func_ptr: *mut u8) -> Self {
-        Self(NonNull::new(func_ptr).unwrap())
+        Self {
+            ptr: NonNull::new(func_ptr).unwrap(),
+        }
     }
 
     pub fn as_ptr(&self) -> *const u8 {
-        self.0.as_ptr()
+        self.ptr.as_ptr()
     }
 }
 
@@ -133,10 +142,19 @@ pub trait ExternRef64: Copy {
 }
 
 pub enum FuncInfo {
-    // TODO: add signatures
-    Owned { offset: u32 },
-    Imported { module: ImportIndex, name: String },
-    Native { ptr: RawFuncPtr },
+    Owned {
+        offset: u32,
+        ty: TypeIndex,
+    },
+    Imported {
+        module: ImportIndex,
+        name: String,
+        ty: TypeIndex,
+    },
+    Native {
+        ptr: FuncPtr,
+        ty: TypeIndex,
+    },
 }
 
 impl FuncInfo {
@@ -246,6 +264,7 @@ pub struct Reloc {
 #[derive(Debug)]
 pub enum ModuleError {
     FailedToInstantiate,
+    TypeError,
     RuntimeError,
 }
 
@@ -260,6 +279,7 @@ pub trait Module {
     fn heaps(&self) -> &FrozenMap<HeapIndex, HeapInfo>;
     fn tables(&self) -> &FrozenMap<TableIndex, TableInfo>;
     fn funcs(&self) -> &FrozenMap<FuncIndex, FuncInfo>;
+    fn types(&self) -> &FrozenMap<TypeIndex, FuncType>;
     fn globs(&self) -> &FrozenMap<GlobIndex, GlobInfo>;
     fn imports(&self) -> &FrozenMap<ImportIndex, String>;
     fn data_segments(&self) -> &[DataSegment];

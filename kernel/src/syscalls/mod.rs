@@ -3,12 +3,13 @@
 //! System Calls in Coral are provided as a native module, that can be linked to any Wasm module.
 
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
+use crate::kprintln;
 use crate::runtime::{VmaIndex, ACTIVE_VMA};
-use crate::{kprint, kprintln};
-use wasm::{ExternRef64, NativeModule, NativeModuleBuilder, RawFuncPtr};
+use wasm::{ExternRef64, FuncPtr, FuncType, NativeModule, NativeModuleBuilder, ValueType};
 
 // ————————————————————————————— Native Module —————————————————————————————— //
 
@@ -17,12 +18,18 @@ pub fn build_syscall_module(handles_table: Vec<ExternRef>) -> NativeModule {
     unsafe {
         NativeModuleBuilder::new()
             .add_func(
-                String::from("print_char"),
-                RawFuncPtr::new(print_char as *mut u8),
-            )
-            .add_func(
                 String::from("vma_write"),
-                RawFuncPtr::new(vma_write as *mut u8),
+                FuncPtr::new(vma_write as *mut u8),
+                FuncType::new(
+                    vec![
+                        ValueType::ExternRef,
+                        ValueType::ExternRef,
+                        ValueType::I64,
+                        ValueType::I64,
+                        ValueType::I64,
+                    ],
+                    vec![],
+                ),
             )
             .add_table(String::from("handles"), handles_table)
             .build()
@@ -35,8 +42,6 @@ pub fn build_syscall_module(handles_table: Vec<ExternRef>) -> NativeModule {
 /// functions.
 type VmCtx = u64;
 
-/// A WebAssembly u32.
-type WasmU32 = u32;
 /// A WebAssembly u64.
 type WasmU64 = u64;
 
@@ -65,15 +70,6 @@ impl ExternRef64 for ExternRef {
 }
 
 // —————————————————————————————— System Calls —————————————————————————————— //
-
-/// Prints a character.
-///
-/// The very first syscall! Useful for testing and debugging!
-extern "sysv64" fn print_char(char: WasmU32, _vmctx: VmCtx) {
-    if let Some(c) = char::from_u32(char) {
-        kprint!("{}", c);
-    }
-}
 
 extern "sysv64" fn vma_write(
     source: ExternRef,

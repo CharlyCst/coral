@@ -11,7 +11,8 @@ use crate::compiler;
 use crate::compiler::Compiler;
 use crate::userspace_alloc::{MMapArea, Runtime};
 use wasm::{
-    ExternRef64, Instance, MemoryArea, Module, NativeModuleBuilder, RawFuncPtr, WasmModule,
+    ExternRef64, FuncPtr, FuncType, Instance, MemoryArea, Module, ModuleError, NativeModuleBuilder,
+    ValueType, WasmModule,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -244,10 +245,11 @@ fn import_native_func() {
     extern "sysv64" fn foreign_func(_vmctx: u64) -> i32 {
         42
     }
+    let ty = FuncType::new(vec![], vec![ValueType::I32]);
     let imported_module = unsafe {
-        let the_answer = RawFuncPtr::new(foreign_func as *mut u8);
+        let the_answer = FuncPtr::new(foreign_func as *mut u8);
         NativeModuleBuilder::new()
-            .add_func(String::from("the_answer"), the_answer)
+            .add_func(String::from("the_answer"), the_answer, ty)
             .build()
     };
     let answer = execute_0_deps(module, vec![("answer", imported_module)]);
@@ -431,6 +433,35 @@ fn import_global() {
 }
 
 #[test]
+fn func_typecheck() {
+    let module = compile(
+        r#"
+        (module
+            (import "answer" "the_answer"
+                (func $the_answer (type $t))
+            )
+            (type $t (func (result i32)))
+            (func $call_imported (result i32)
+                call $the_answer
+            )
+            (export "main" (func $call_imported))
+        )
+        "#,
+    );
+
+    extern "sysv64" fn foreign_func(_: i32, _vmctx: u64) {}
+    let ty = FuncType::new(vec![ValueType::I32], vec![]); // Bad type
+    let imported_module = unsafe {
+        let the_answer = FuncPtr::new(foreign_func as *mut u8);
+        NativeModuleBuilder::new()
+            .add_func(String::from("the_answer"), the_answer, ty)
+            .build()
+    };
+
+    assert!(type_error(module, vec![("answer", imported_module)]));
+}
+
+#[test]
 /// The simplest possible program, compiled from Rust to Wasm.
 fn the_answer_rust() {
     let module = compile(
@@ -539,5 +570,22 @@ fn call_0(instance: &mut Instance<impl MemoryArea>) -> i32 {
             out("rax") result,
         );
         result
+    }
+}
+
+fn type_error(module: impl Module, dependencies: Vec<(&str, impl Module)>) -> bool {
+    let runtime = Runtime::new();
+    let dependencies = dependencies
+        .into_iter()
+        .map(|(name, module)| {
+            (
+                name,
+                Instance::instantiate(&module, vec![], &runtime).unwrap(),
+            )
+        })
+        .collect::<Vec<(&str, Instance<Arc<MMapArea>>)>>();
+    match Instance::instantiate(&module, dependencies, &runtime) {
+        Err(ModuleError::TypeError) => true,
+        _ => false,
     }
 }

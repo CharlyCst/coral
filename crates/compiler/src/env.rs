@@ -99,10 +99,12 @@ pub struct DataSegment {
 }
 
 pub struct ModuleInfo {
-    /// TypeID -> Type
-    pub func_types: PrimaryMap<TypeIndex, ir::Signature>,
     /// FunID -> TypeID
     pub funcs: PrimaryMap<FuncIndex, Exportable<TypeIndex>>,
+    /// TypeID -> Wasm Type
+    pub types: PrimaryMap<TypeIndex, cw::WasmFuncType>,
+    /// TypeID -> Cranelift Signature
+    pub func_signatures: SecondaryMap<TypeIndex, Option<ir::Signature>>,
     /// FunID -> Option<imported_func_info>
     pub imported_funcs: SecondaryMap<FuncIndex, Option<ImportedFunc>>,
     /// Function bodies
@@ -134,7 +136,7 @@ pub struct ModuleInfo {
 impl ModuleInfo {
     fn get_func_sig(&self, fun_index: FuncIndex) -> &ir::Signature {
         let type_idx = self.funcs[fun_index].entity;
-        &self.func_types[type_idx]
+        self.func_signatures[type_idx].as_ref().unwrap()
     }
 
     fn get_fun_env(&self) -> FunctionEnvironment {
@@ -208,8 +210,9 @@ pub struct ModuleEnvironment {
 impl ModuleEnvironment {
     pub fn new(target_config: TargetFrontendConfig) -> Self {
         let info = ModuleInfo {
-            func_types: PrimaryMap::new(),
             funcs: PrimaryMap::new(),
+            types: PrimaryMap::new(),
+            func_signatures: SecondaryMap::new(),
             imported_funcs: SecondaryMap::new(),
             func_bodies: PrimaryMap::new(),
             heaps: PrimaryMap::new(),
@@ -251,7 +254,9 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
         ));
         sig.returns
             .extend(wasm_func_type.returns().iter().map(&mut wasm_to_ir));
-        self.info.func_types.push(sig);
+
+        let ty_idx = self.info.types.push(wasm_func_type);
+        self.info.func_signatures[ty_idx] = Some(sig);
         Ok(())
     }
 
