@@ -7,7 +7,6 @@ extern crate alloc;
 
 use alloc::sync::Arc;
 use bootloader::{entry_point, BootInfo};
-use core::arch::asm;
 use core::panic::PanicInfo;
 use core::ptr::NonNull;
 

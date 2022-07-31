@@ -319,6 +319,17 @@ impl<Area: MemoryArea> Instance<Area> {
         }
     }
 
+    /// Returns the type of the given function.
+    pub fn get_func_type_by_index(&self, index: FuncIndex) -> &FuncType {
+        let func = &self.funcs[index];
+        let ty = match func {
+            Func::Owned { ty, .. } => ty,
+            Func::Imported { ty, .. } => ty,
+            Func::Native { ty, .. } => ty,
+        };
+        &self.types[*ty]
+    }
+
     /// Returns the index of a function exported by the instance.
     pub fn get_func_index_by_name<'a, 'b>(&'a self, name: &'b str) -> Option<FuncIndex> {
         match self.items.get(name) {
