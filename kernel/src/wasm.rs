@@ -139,3 +139,11 @@ impl Component {
         }
     }
 }
+
+/// Run the given function from a component.
+pub async fn run(component: Arc<Component>, func: FuncIndex) {
+    match component.try_run(func) {
+        RunStatus::Ok => {}
+        RunStatus::Busy => todo!("Handle busy components"),
+    }
+}

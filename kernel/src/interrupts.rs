@@ -1,13 +1,11 @@
 use lazy_static::lazy_static;
-use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
 use pic8259::ChainedPics;
 use spin::Mutex;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
-use crate::gdt;
-use crate::kprint;
-use crate::kprintln;
+use crate::{kprintln, kprint, gdt};
+use crate::event_sources::add_scancode;
 
 pub const PORT_SCANCODE: u16 = 0x60;
 
@@ -26,12 +24,6 @@ pub enum InterruptIndex {
 
 pub static PICS: Mutex<ChainedPics> =
     Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
-
-lazy_static! {
-    static ref KEYBOARD: Mutex<Keyboard<layouts::Azerty, ScancodeSet1>> = Mutex::new(
-        Keyboard::new(layouts::Azerty, ScancodeSet1, HandleControl::Ignore)
-    );
-}
 
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
@@ -86,17 +78,8 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
     let mut port = Port::new(PORT_SCANCODE);
-    let mut keyboard = KEYBOARD.lock();
     let scancode: u8 = unsafe { port.read() };
-
-    if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
-        if let Some(key) = keyboard.process_keyevent(key_event) {
-            match key {
-                DecodedKey::Unicode(character) => kprint!("{}", character),
-                DecodedKey::RawKey(key) => kprint!("{:?}", key),
-            }
-        }
-    }
+    add_scancode(scancode);
 
     unsafe {
         PICS.lock()

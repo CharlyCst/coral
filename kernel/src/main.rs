@@ -14,6 +14,7 @@ use compiler::{Compiler, X86_64Compiler};
 use kernel::kprintln;
 use kernel::memory::Vma;
 use kernel::runtime::{KoIndex, Runtime, ACTIVE_VMA};
+use kernel::wasm;
 
 /// The first user program to run, expected to boostrap userspace.
 const WASM_USERBOOT: &'static [u8] = std::include_bytes!("../wasm/userboot.wasm");
@@ -57,10 +58,9 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let component = Arc::new(kernel::wasm::Component::new(userboot));
 
     let mut scheduler = kernel::scheduler::Scheduler::new();
-    scheduler.enqueue(component, userboot_init);
+    scheduler.schedule(kernel::scheduler::Task::new(kernel::event_sources::print_keypress()));
+    scheduler.schedule(kernel::scheduler::Task::new(wasm::run(component, userboot_init)));
     scheduler.run();
-
-    kernel::hlt_loop();
 }
 
 #[cfg(not(test))]

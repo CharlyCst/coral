@@ -29,6 +29,7 @@ pub mod syscalls;
 pub mod runtime;
 pub mod scheduler;
 pub mod wasm;
+pub mod event_sources;
 
 pub use memory::init as init_memory;
 
