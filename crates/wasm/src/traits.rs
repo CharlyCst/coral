@@ -118,6 +118,9 @@ pub struct FuncPtr {
     ptr: NonNull<u8>,
 }
 
+unsafe impl Send for FuncPtr {}
+unsafe impl Sync for FuncPtr {}
+
 impl FuncPtr {
     /// Creates a raw function pointer.
     ///
@@ -126,6 +129,8 @@ impl FuncPtr {
     /// writing, this means SystemV calling convention with a `vmctx: u64` as last argument.
     /// Note that the calling convention might be subject to change, there are no stability
     /// guarantees yet!
+    ///
+    /// The pointer **must** stay valid for the whole execution.
     pub unsafe fn new(func_ptr: *mut u8) -> Self {
         Self {
             ptr: NonNull::new(func_ptr).unwrap(),

@@ -4,7 +4,7 @@ use spin::Mutex;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
-use crate::event_sources::{push_keyboard_event, push_timer_event};
+use crate::events::{push_keyboard_event, push_timer_event};
 use crate::{gdt, kprintln};
 
 pub const PORT_SCANCODE: u16 = 0x60;

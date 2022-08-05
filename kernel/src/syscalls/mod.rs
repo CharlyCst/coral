@@ -7,7 +7,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
-use crate::kprintln;
 use crate::runtime::{VmaIndex, ACTIVE_VMA};
 use wasm::{ExternRef64, FuncPtr, FuncType, NativeModule, NativeModuleBuilder, ValueType};
 
@@ -79,14 +78,6 @@ extern "sysv64" fn vma_write(
     size: WasmU64,
     _vmctx: VmCtx,
 ) {
-    kprintln!(
-        "VMA-Write - source {:?} + 0x{:x} - target {:?} + 0x{:x} - len 0x{:x}",
-        source,
-        source_offset,
-        target,
-        target_offset,
-        size,
-    );
     let source = match source {
         ExternRef::Vma(vma_idx) => vma_idx,
         _ => todo!("Source handle is invalid"), // Return an error

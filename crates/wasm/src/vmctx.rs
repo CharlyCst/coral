@@ -21,6 +21,11 @@ pub struct VMContext {
     glob_offset: usize,
 }
 
+// SAFETY: Send is not implemented because of NonNull for the VMContext pointer. As the VMContext
+// provides ownership over the memory region it can be safely sent across threads.
+unsafe impl Send for VMContext {}
+unsafe impl Sync for VMContext {}
+
 impl VMContext {
     /// Initialize an empty VMContext.
     ///

@@ -13,8 +13,9 @@ use futures::task::AtomicWaker;
 use futures::StreamExt;
 use spin::Mutex;
 
-use crate::kprint;
-use crate::scheduler::Task;
+use crate::scheduler::{Scheduler, Task};
+use crate::wasm::Component;
+use wasm::FuncIndex;
 
 // —————————————————————————————— Known Events —————————————————————————————— //
 
@@ -78,7 +79,10 @@ impl<T> EventSource<T> {
 
     /// Pushes an event to the queue and wake the corresponding event source.
     pub fn dispatch(&self, item: T) {
-        self.queue.push(item);
+        self.queue
+            .push(item)
+            .ok()
+            .expect("Can't dispatch event: queue is full");
         self.waker.wake();
     }
 }
@@ -117,7 +121,7 @@ impl<T> Stream for SourceStream<T> {
 /// A dispatcher is connected to an event source, and can be scheduled to asyncronously wait on new
 /// events and dispatch them to listeners.
 pub struct EventDispatcher<T> {
-    listeners: Mutex<Vec<()>>,
+    listeners: Mutex<Vec<(Arc<Component>, FuncIndex)>>,
     source: Arc<EventSource<T>>,
 }
 
@@ -136,23 +140,33 @@ impl<T> EventDispatcher<T> {
         &self.source
     }
 
-    async fn as_promise(self: Arc<Self>, mut stream: Pin<Box<SourceStream<T>>>) {
-        while let Some(_item) = stream.next().await {
-            // Just print something for now
-            kprint!(".");
-        }
+    /// Registers a new listener for this event dispatcher.
+    pub fn add_listener(&self, component: Arc<Component>, handler: FuncIndex) {
+        let mut listeners = self.listeners.lock();
+        listeners.push((component, handler));
     }
-}
 
-impl<T> EventDispatcher<T>
-where
-    T: 'static,
-{
     /// Creates a dispatch task.
     ///
     /// The task asynchronously wait for event and dispatch them to the listeners.
-    pub fn dispatch(self: Arc<Self>) -> Task {
+    pub fn dispatch(self: Arc<Self>, scheduler: Arc<Scheduler>) -> Task
+    where
+        T: 'static + Send,
+    {
         let stream = SourceStream::new(self.source.clone());
-        Task::new(self.clone().as_promise(stream))
+        Task::new(self.clone().as_promise(stream, scheduler))
+    }
+
+    async fn as_promise(
+        self: Arc<Self>,
+        mut stream: Pin<Box<SourceStream<T>>>,
+        scheduler: Arc<Scheduler>,
+    ) {
+        while let Some(_item) = stream.next().await {
+            let listeners = self.listeners.lock();
+            for (component, handler) in listeners.iter() {
+                scheduler.schedule(component.clone().run(*handler));
+            }
+        }
     }
 }

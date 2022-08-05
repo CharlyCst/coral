@@ -14,7 +14,6 @@ use compiler::{Compiler, X86_64Compiler};
 use kernel::kprintln;
 use kernel::memory::Vma;
 use kernel::runtime::{KoIndex, Runtime, ACTIVE_VMA};
-use kernel::wasm;
 
 /// The first user program to run, expected to boostrap userspace.
 const WASM_USERBOOT: &'static [u8] = std::include_bytes!("../wasm/userboot.wasm");
@@ -60,19 +59,20 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         .expect("Failed to retrieve 'tick' from userboot instance");
     let component = Arc::new(kernel::wasm::Component::new(userboot));
 
-    let mut scheduler = kernel::scheduler::Scheduler::new();
+    let scheduler = Arc::new(kernel::scheduler::Scheduler::new());
 
     // Keyboard events
     let keyboard_dispatcher = Arc::new(kernel::events::EventDispatcher::new(128));
     let keyboard_source = keyboard_dispatcher.source().clone();
     kernel::events::KEYBOARD_EVENTS.initialize(keyboard_source);
-    scheduler.schedule(keyboard_dispatcher.dispatch());
+    scheduler.schedule(keyboard_dispatcher.dispatch(scheduler.clone()));
 
     // Timer events
     let timer_dispatcher = Arc::new(kernel::events::EventDispatcher::new(128));
     let timer_source = timer_dispatcher.source().clone();
     kernel::events::TIMER_EVENTS.initialize(timer_source);
-    scheduler.schedule(timer_dispatcher.dispatch());
+    timer_dispatcher.add_listener(component.clone(), userboot_tick);
+    scheduler.schedule(timer_dispatcher.dispatch(scheduler.clone()));
 
     // Schedule userboot
     scheduler.schedule(component.run(userboot_init));
