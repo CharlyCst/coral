@@ -55,11 +55,27 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let userboot_init = userboot
         .get_func_index_by_name("init")
         .expect("Failed to retrieve 'init' from userboot instance");
+    let userboot_tick = userboot
+        .get_func_index_by_name("tick")
+        .expect("Failed to retrieve 'tick' from userboot instance");
     let component = Arc::new(kernel::wasm::Component::new(userboot));
 
     let mut scheduler = kernel::scheduler::Scheduler::new();
-    scheduler.schedule(kernel::scheduler::Task::new(kernel::event_sources::print_keypress()));
-    scheduler.schedule(kernel::scheduler::Task::new(wasm::run(component, userboot_init)));
+
+    // Keyboard events
+    let keyboard_dispatcher = Arc::new(kernel::events::EventDispatcher::new(128));
+    let keyboard_source = keyboard_dispatcher.source().clone();
+    kernel::events::KEYBOARD_EVENTS.initialize(keyboard_source);
+    scheduler.schedule(keyboard_dispatcher.dispatch());
+
+    // Timer events
+    let timer_dispatcher = Arc::new(kernel::events::EventDispatcher::new(128));
+    let timer_source = timer_dispatcher.source().clone();
+    kernel::events::TIMER_EVENTS.initialize(timer_source);
+    scheduler.schedule(timer_dispatcher.dispatch());
+
+    // Schedule userboot
+    scheduler.schedule(component.run(userboot_init));
     scheduler.run();
 }
 

@@ -5,6 +5,7 @@ use core::arch::asm;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::memory::Vma;
+use crate::scheduler::Task;
 use wasm::{FuncIndex, Instance};
 
 pub struct Component {
@@ -138,12 +139,16 @@ impl Component {
             );
         }
     }
-}
 
-/// Run the given function from a component.
-pub async fn run(component: Arc<Component>, func: FuncIndex) {
-    match component.try_run(func) {
-        RunStatus::Ok => {}
-        RunStatus::Busy => todo!("Handle busy components"),
+    pub fn run(self: Arc<Self>, func: FuncIndex) -> Task {
+        Task::new(self.run_promise(func))
+    }
+
+    /// Run the given function from a component.
+    async fn run_promise(self: Arc<Self>, func: FuncIndex) {
+        match self.try_run(func) {
+            RunStatus::Ok => {}
+            RunStatus::Busy => todo!("Handle busy components"),
+        }
     }
 }

@@ -1,3 +1,5 @@
+// ————————————————————————————————— Screen ————————————————————————————————— //
+
 const BUFFER_HEIGHT: usize = 25;
 const BUFFER_WIDTH: usize = 80;
 const BUFFER_LEN: usize = BUFFER_HEIGHT * BUFFER_WIDTH;
@@ -59,29 +61,61 @@ impl ScreenChar {
     }
 }
 
-#[no_mangle]
-pub fn init() -> u32 {
-    let color = ColorCode::new(Color::Pink, Color::Black);
-
-    for (idx, c) in "Hello, World!".chars().enumerate() {
-        if c.is_ascii() {
-            let byte = c as u8;
-
-            // SAFETY: we only have a single thread in webassembly.
-            unsafe {
-                BUFFER.get_mut(2 * BUFFER_WIDTH + idx + 1).and_then(|loc| {
-                    *loc = color.char(byte);
-                    Some(())
-                });
-            }
-        }
+/// Write a character to the internal buffer.
+fn write_char(c: ScreenChar, x: usize, y: usize) {
+    // SAFETY: we only have a single thread in webassembly.
+    unsafe {
+        BUFFER.get_mut(BUFFER_WIDTH * y + x).and_then(|loc| {
+            *loc = c;
+            Some(())
+        });
     }
+}
 
+/// Display the buffer to the screen.
+fn flush() {
     unsafe {
         vma_write(0, 0, BUFFER.as_ptr() as u64, 0, BUFFER.len() as u64);
     }
+}
+
+// ——————————————————————————— Exported Functions ——————————————————————————— //
+
+const COLOR: ColorCode = ColorCode::new(Color::Pink, Color::Black);
+
+#[no_mangle]
+pub fn init() -> u32 {
+    for (idx, c) in "Coral - userboot".chars().enumerate() {
+        if c.is_ascii() {
+            write_char(COLOR.char(c as u8), idx + 1, 1);
+        }
+    }
+
+    for x in 0..BUFFER_WIDTH {
+        write_char(COLOR.char(b'_'), x, 2);
+    }
+
+    flush();
 
     42
+}
+
+static mut COUNTER: usize = 0;
+
+#[no_mangle]
+pub fn tick() {
+    let counter = unsafe {
+        COUNTER += 1;
+        COUNTER
+    };
+
+    let char = match counter % 2 {
+        0 => b'+',
+        1 => b'-',
+        _ => unreachable!(),
+    };
+    write_char(COLOR.char(char), BUFFER_WIDTH - 2, 1);
+    flush();
 }
 
 // ———————————————————————————————— Syscalls ———————————————————————————————— //

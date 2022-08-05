@@ -4,8 +4,8 @@ use spin::Mutex;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
-use crate::{kprintln, kprint, gdt};
-use crate::event_sources::add_scancode;
+use crate::event_sources::{push_keyboard_event, push_timer_event};
+use crate::{gdt, kprintln};
 
 pub const PORT_SCANCODE: u16 = 0x60;
 
@@ -68,7 +68,7 @@ extern "x86-interrupt" fn double_fault_handler(
 }
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    kprint!(".");
+    push_timer_event();
 
     unsafe {
         PICS.lock()
@@ -79,7 +79,7 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
     let mut port = Port::new(PORT_SCANCODE);
     let scancode: u8 = unsafe { port.read() };
-    add_scancode(scancode);
+    push_keyboard_event(scancode);
 
     unsafe {
         PICS.lock()
