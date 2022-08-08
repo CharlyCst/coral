@@ -13,3 +13,14 @@ members = [
     "crates/wasm",
     "crates/bindgen"
 ]
+
+[profile.kernel]
+# Without some basic optimizations the kernel might be too slow
+inherits = "dev"
+opt-level = 1
+
+[profile.userland]
+# Optimize size for userland programs
+inherits = "release"
+opt-level = "z"
+lto = true

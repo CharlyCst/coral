@@ -1,101 +1,26 @@
-// ————————————————————————————————— Screen ————————————————————————————————— //
+#![no_std]
 
-const BUFFER_HEIGHT: usize = 25;
-const BUFFER_WIDTH: usize = 80;
-const BUFFER_LEN: usize = BUFFER_HEIGHT * BUFFER_WIDTH;
-
-static mut BUFFER: [ScreenChar; BUFFER_LEN] = [ScreenChar::black(); BUFFER_LEN];
-
-#[allow(dead_code)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-#[repr(u8)]
-pub enum Color {
-    Black = 0,
-    Blue = 1,
-    Green = 2,
-    Cyan = 3,
-    Red = 4,
-    Magenta = 5,
-    Brown = 6,
-    LightGray = 7,
-    DarkGray = 8,
-    LightBlue = 9,
-    LightGreen = 10,
-    LightCyan = 11,
-    LightRed = 12,
-    Pink = 13,
-    Yellow = 14,
-    White = 15,
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-#[repr(transparent)]
-struct ColorCode(u8);
-
-impl ColorCode {
-    const fn new(foreground: Color, background: Color) -> Self {
-        Self((background as u8) << 4 | (foreground as u8))
-    }
-
-    fn char(self, ascii_character: u8) -> ScreenChar {
-        ScreenChar {
-            ascii_character,
-            color_code: self,
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-#[repr(C)]
-struct ScreenChar {
-    ascii_character: u8,
-    color_code: ColorCode,
-}
-
-impl ScreenChar {
-    pub const fn black() -> Self {
-        Self {
-            ascii_character: 0,
-            color_code: ColorCode::new(Color::Black, Color::Black),
-        }
-    }
-}
-
-/// Write a character to the internal buffer.
-fn write_char(c: ScreenChar, x: usize, y: usize) {
-    // SAFETY: we only have a single thread in webassembly.
-    unsafe {
-        BUFFER.get_mut(BUFFER_WIDTH * y + x).and_then(|loc| {
-            *loc = c;
-            Some(())
-        });
-    }
-}
-
-/// Display the buffer to the screen.
-fn flush() {
-    unsafe {
-        vma_write(0, 0, BUFFER.as_ptr() as u64, 0, BUFFER.len() as u64);
-    }
-}
+mod keyboard;
+mod syscalls;
+mod vga;
 
 // ——————————————————————————— Exported Functions ——————————————————————————— //
 
-const COLOR: ColorCode = ColorCode::new(Color::Pink, Color::Black);
+const COLOR: vga::ColorCode = vga::ColorCode::new(vga::Color::Pink, vga::Color::Black);
 
 #[no_mangle]
 pub fn init() -> u32 {
     for (idx, c) in "Coral - userboot".chars().enumerate() {
         if c.is_ascii() {
-            write_char(COLOR.char(c as u8), idx + 1, 1);
+            vga::write_char(COLOR.char(c as u8), idx + 1, 1);
         }
     }
 
-    for x in 0..BUFFER_WIDTH {
-        write_char(COLOR.char(b'_'), x, 2);
+    for x in 0..vga::BUFFER_WIDTH {
+        vga::write_char(COLOR.char(b'_'), x, 2);
     }
 
-    flush();
+    vga::flush();
 
     42
 }
@@ -109,26 +34,60 @@ pub fn tick() {
         COUNTER
     };
 
-    let char = match counter % 2 {
-        0 => b'+',
+    let char = match (counter / 2) % 5 {
+        0 => b'_',
         1 => b'-',
+        2 => b'+',
+        3 => b'*',
+        4 => b'!',
         _ => unreachable!(),
     };
-    write_char(COLOR.char(char), BUFFER_WIDTH - 2, 1);
-    flush();
+    vga::write_char(COLOR.char(char), vga::BUFFER_WIDTH - 2, 1);
+    vga::flush();
 }
 
-// ———————————————————————————————— Syscalls ———————————————————————————————— //
+static mut CURSOR_X: usize = 0;
+static mut CURSOR_Y: usize = 4;
 
-type ExternRef = u32;
+#[no_mangle]
+pub fn press_key(scancode: u8) {
+    let key = match keyboard::process_event(scancode) {
+        Some(key) => key,
+        None => return,
+    };
 
-#[link(wasm_import_module = "coral")]
-extern "C" {
-    fn vma_write(
-        source: ExternRef,
-        target: ExternRef,
-        source_offset: u64,
-        target_offset: u64,
-        size: u64,
-    );
+    if let keyboard::DecodedKey::Unicode(char) = key {
+        if char.is_ascii() {
+            let (x, y) = get_cursor();
+            vga::write_char(COLOR.char(char as u8), x, y);
+            vga::flush();
+            move_cursor();
+        }
+    }
+}
+
+fn get_cursor() -> (usize, usize) {
+    // SAFETY: There is no concurrency in this program, hence not race conditions
+    unsafe { (CURSOR_X, CURSOR_Y) }
+}
+
+fn move_cursor() {
+    // SAFETY: There is no concurrency in this program, hence not race conditions
+    unsafe {
+        CURSOR_X += 1;
+
+        if CURSOR_X >= vga::BUFFER_WIDTH {
+            if CURSOR_Y + 1 < vga::BUFFER_HEIGHT {
+                CURSOR_X = 0;
+                CURSOR_Y += 1;
+            }
+        }
+    }
+}
+
+// ————————————————————————————— Panic Handler —————————————————————————————— //
+
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
 }

@@ -14,7 +14,7 @@ use futures::StreamExt;
 use spin::Mutex;
 
 use crate::scheduler::{Scheduler, Task};
-use crate::wasm::Component;
+use crate::wasm::{AsArgs, Component};
 use wasm::FuncIndex;
 
 // —————————————————————————————— Known Events —————————————————————————————— //
@@ -125,7 +125,10 @@ pub struct EventDispatcher<T> {
     source: Arc<EventSource<T>>,
 }
 
-impl<T> EventDispatcher<T> {
+impl<T> EventDispatcher<T>
+where
+    T: AsArgs,
+{
     /// Creates a new event dispatcher with the given capacity.
     pub fn new(capacity: usize) -> Self {
         let queue = ArrayQueue::new(capacity);
@@ -162,10 +165,10 @@ impl<T> EventDispatcher<T> {
         mut stream: Pin<Box<SourceStream<T>>>,
         scheduler: Arc<Scheduler>,
     ) {
-        while let Some(_item) = stream.next().await {
+        while let Some(item) = stream.next().await {
             let listeners = self.listeners.lock();
             for (component, handler) in listeners.iter() {
-                scheduler.schedule(component.clone().run(*handler));
+                scheduler.schedule(component.clone().run(*handler, item.as_args()));
             }
         }
     }

@@ -98,6 +98,18 @@ pub struct DataSegment {
     pub data: Vec<u8>,
 }
 
+#[derive(Clone)]
+pub struct TableSegment {
+    /// The table to which the segment must be applied.
+    pub table_index: TableIndex,
+    /// An optional base, in the form of a global.
+    pub base: Option<GlobalIndex>,
+    /// Offset, relative to the base if any, to 0 otherwise.
+    pub offset: u32,
+    /// The actual elements
+    pub elements: Box<[FuncIndex]>,
+}
+
 pub struct ModuleInfo {
     /// FunID -> TypeID
     pub funcs: PrimaryMap<FuncIndex, Exportable<TypeIndex>>,
@@ -125,6 +137,8 @@ pub struct ModuleInfo {
     pub modules: PrimaryMap<ImportIndex, String>,
     /// The list of data segments to initialize.
     pub segments: Vec<DataSegment>,
+    /// The list of table elements to initialize.
+    pub elements: Vec<TableSegment>,
     /// The start function, to be called after memory and table initialization.
     pub start: Option<FuncIndex>,
     /// The number of imported funcs. The defined functions goes after the imported ones.
@@ -223,6 +237,7 @@ impl ModuleEnvironment {
             imported_tables: SecondaryMap::new(),
             modules: PrimaryMap::new(),
             segments: Vec::new(),
+            elements: Vec::new(),
             start: None,
             nb_imported_funcs: 0,
             target_config,
@@ -387,12 +402,19 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
 
     fn declare_table_elements(
         &mut self,
-        _table_index: cw::TableIndex,
-        _base: Option<cw::GlobalIndex>,
-        _offset: u32,
-        _elements: Box<[cw::FuncIndex]>,
+        table_index: TableIndex,
+        base: Option<GlobalIndex>,
+        offset: u32,
+        elements: Box<[FuncIndex]>,
     ) -> cw::WasmResult<()> {
-        todo!()
+        let segment = TableSegment {
+            table_index,
+            base,
+            offset,
+            elements,
+        };
+        self.info.elements.push(segment);
+        Ok(())
     }
 
     fn declare_passive_element(

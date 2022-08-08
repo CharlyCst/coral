@@ -12,18 +12,18 @@ test:
     # Wasm tests -- for now only checking
     cd ./crates/wasm && cargo check
     # Coral tests
-    cd ./kernel && cargo test
+    cd ./kernel && cargo test --profile kernel
 
 # Run Coral
 run:
-    cd ./kernel && cargo run
+    cd ./kernel && cargo run --profile kernel
 
 # Build and install userland
 userland:
     # Build userboot
-    cd ./userland/userboot && cargo build --release
+    cd ./userland/userboot && cargo build --profile userland
     cargo run -p coral-bindgen -- \
         -o kernel/wasm/userboot.wasm \
-        target/wasm32-unknown-unknown/release/userboot.wasm \
+        target/wasm32-unknown-unknown/userland/userboot.wasm \
         userland/userboot/bindgen.toml
 

@@ -230,7 +230,11 @@ fn replace_funcs_in_block(
                 next_blocks.push(block.consequent);
                 next_blocks.push(block.alternative);
             }
-            ir::Instr::BrTable(_) => todo!("Branching Tables are not yet supported"),
+            ir::Instr::BrTable(table) => {
+                for block in table.blocks.iter() {
+                    next_blocks.push(*block);
+                }
+            }
             _ => (),
         }
     }
@@ -240,14 +244,5 @@ fn replace_funcs_in_block(
             visited_blocks.insert(block);
             replace_funcs_in_block(func, block, visited_blocks, func_patch);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
     }
 }

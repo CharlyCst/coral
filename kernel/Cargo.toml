@@ -12,21 +12,17 @@ compiler = { package = "coral-compiler", path = "../crates/compiler" }
 # External Dependencies
 bootloader = { version = "0.9.21", features = ["map_physical_memory"] }
 futures = { version = "0.3", default-features = false }
+conquer-once = "0.3.2"
 volatile = "0.2.6"
 spin = "0.5.2"
 x86_64 = "0.14.8"
 uart_16550 = { version = "=0.2.16" }
 pic8259 = "0.10.1"
-pc-keyboard = "0.5.0"
 
 [dependencies.crossbeam-queue]
 version = "0.3"
 default-features = false
 features = ["alloc"]
-
-[dependencies.conquer-once]
-version = "0.3.2"
-use-default-features = false
 
 [dependencies.lazy_static]
 version = "1.0"

@@ -430,7 +430,6 @@ dependencies = [
  "crossbeam-queue",
  "futures",
  "lazy_static",
- "pc-keyboard",
  "pic8259",
  "spin",
  "uart_16550",
@@ -709,6 +708,9 @@ checksum = "3ed742d4ea2bd1176e236172c8429aaf54486e7ac098db29ffe6529e0ce50973"
 [[package]]
 name = "userboot"
 version = "0.1.0"
+dependencies = [
+ "pc-keyboard",
+]
 
 [[package]]
 name = "version_check"
