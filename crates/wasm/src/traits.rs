@@ -222,6 +222,19 @@ pub struct DataSegment {
     pub data: Vec<u8>,
 }
 
+/// A table segment used to initialize table elements.
+#[derive(Clone)]
+pub struct TableSegment {
+    /// The table to which the segment must be applied.
+    pub table_index: TableIndex,
+    /// An optional base, in the form of a global.
+    pub base: Option<GlobIndex>,
+    /// Offset, relative to the base if any, to 0 otherwise.
+    pub offset: u32,
+    /// The actual elements
+    pub elements: Box<[FuncIndex]>,
+}
+
 pub trait VMContextLayout {
     fn heaps(&self) -> &[HeapIndex];
     fn tables(&self) -> &[TableIndex];
@@ -288,6 +301,7 @@ pub trait Module {
     fn globs(&self) -> &FrozenMap<GlobIndex, GlobInfo>;
     fn imports(&self) -> &FrozenMap<ImportIndex, String>;
     fn data_segments(&self) -> &[DataSegment];
+    fn table_segments(&self) -> &[TableSegment];
     fn relocs(&self) -> &[Reloc];
     fn public_items(&self) -> &HashMap<String, ItemRef>;
     fn vmctx_layout(&self) -> &Self::VMContext;

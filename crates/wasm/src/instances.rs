@@ -113,11 +113,48 @@ impl<Area: MemoryArea> Instance<Area> {
         let items = module.public_items().clone();
         let types = module.types().clone();
 
+        let imports = Self::select_imports(module, import_from)?;
+        let funcs = Self::prepare_funcs(module, &imports, &types)?;
+        let globs = Self::prepare_globs(module, &imports)?;
+        let heaps = Self::allocate_heaps(module, &imports, runtime, &mut ctx)?;
+        let tables = Self::allocate_tables(module, &imports, runtime, &mut ctx)?;
+        let code = Self::allocate_code(module, &imports, &funcs, runtime, &mut ctx)?;
+
+        // Create instance
+        let mut instance = Self {
+            vmctx: VMContext::empty(module.vmctx_layout()),
+            start: module.start(),
+            imports,
+            items,
+            heaps,
+            tables,
+            globs,
+            funcs,
+            types,
+            code,
+        };
+
+        instance.init_tables(module);
+        instance.init_vmctx(); // Set the VMContext to its expected initial values
+
+        Ok(instance)
+    }
+
+    // ————————————————————————————— Instantiation —————————————————————————————— //
+
+    /// Select the imports from the available instances.
+    pub fn select_imports<Mod>(
+        module: &Mod,
+        import_from: Vec<(&str, Instance<Area>)>,
+    ) -> ModuleResult<FrozenMap<ImportIndex, Instance<Area>>>
+    where
+        Mod: Module,
+    {
         let mut import_from = import_from
             .into_iter()
             .map(|x| Some(x))
             .collect::<Vec<Option<(&str, Instance<Area>)>>>();
-        let imports = module.imports().try_map(|module| {
+        module.imports().try_map(|module| {
             // Pick the first matching module
             for item in import_from.iter_mut() {
                 if let Some((item_name, _)) = item {
@@ -128,10 +165,18 @@ impl<Area: MemoryArea> Instance<Area> {
                 }
             }
             Err(ModuleError::FailedToInstantiate)
-        })?;
+        })
+    }
 
-        // Prepare functions
-        let funcs = module.funcs().try_map(|func_info| match func_info {
+    fn prepare_funcs<Mod>(
+        module: &Mod,
+        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+        types: &FrozenMap<TypeIndex, FuncType>,
+    ) -> ModuleResult<FrozenMap<FuncIndex, Func>>
+    where
+        Mod: Module,
+    {
+        module.funcs().try_map(|func_info| match func_info {
             FuncInfo::Owned { offset, ty } => Ok(Func::Owned {
                 offset: *offset,
                 ty: *ty,
@@ -161,10 +206,17 @@ impl<Area: MemoryArea> Instance<Area> {
                     ty: *ty,
                 })
             }
-        })?;
+        })
+    }
 
-        // Initialize globals
-        let globs = module.globs().try_map(|glob_info| match glob_info {
+    fn prepare_globs<Mod>(
+        module: &Mod,
+        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+    ) -> ModuleResult<FrozenMap<GlobIndex, Glob>>
+    where
+        Mod: Module,
+    {
+        module.globs().try_map(|glob_info| match glob_info {
             GlobInfo::Owned { init } => Ok(Glob::Owned { init: *init }),
             GlobInfo::Imported { module, name } => {
                 // Look for the corresponding module
@@ -184,10 +236,19 @@ impl<Area: MemoryArea> Instance<Area> {
                     index: glob_ref,
                 })
             }
-        })?;
+        })
+    }
 
-        // Allocate heaps
-        let heaps = module
+    fn allocate_heaps<Mod, Ctx>(
+        module: &Mod,
+        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+        runtime: &impl Runtime<MemoryArea = Area, Context = Ctx>,
+        ctx: &mut Ctx,
+    ) -> ModuleResult<FrozenMap<HeapIndex, Heap<Area>>>
+    where
+        Mod: Module,
+    {
+        module
             .heaps()
             .try_map_enumerate(|heap_idx, heap_info| match heap_info {
                 HeapInfo::Owned { min_size, kind } => {
@@ -205,7 +266,7 @@ impl<Area: MemoryArea> Instance<Area> {
                         (*min_size as usize) * PAGE_SIZE,
                         *kind,
                         initialize,
-                        &mut ctx,
+                        ctx,
                     )?;
 
                     // Check that the heap was initialized
@@ -230,16 +291,25 @@ impl<Area: MemoryArea> Instance<Area> {
                         index: heap_ref,
                     })
                 }
-            })?;
+            })
+    }
 
-        // Allocate tables
-        let tables = module.tables().try_map(|table_info| match table_info {
+    fn allocate_tables<Mod, Ctx>(
+        module: &Mod,
+        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+        runtime: &impl Runtime<MemoryArea = Area, Context = Ctx>,
+        ctx: &mut Ctx,
+    ) -> ModuleResult<FrozenMap<TableIndex, Table>>
+    where
+        Mod: Module,
+    {
+        module.tables().try_map(|table_info| match table_info {
             crate::TableInfo::Owned {
                 min_size,
                 max_size,
                 ty,
             } => {
-                let table = runtime.alloc_table(*min_size, *max_size, *ty, &mut ctx)?;
+                let table = runtime.alloc_table(*min_size, *max_size, *ty, ctx)?;
                 Ok(Table::Owned(table))
             }
             crate::TableInfo::Native { ptr, .. } => Ok(Table::Owned(ptr.clone())),
@@ -258,7 +328,19 @@ impl<Area: MemoryArea> Instance<Area> {
                     index: table_ref,
                 })
             }
-        })?;
+        })
+    }
+
+    fn allocate_code<Mod, Ctx>(
+        module: &Mod,
+        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+        funcs: &FrozenMap<FuncIndex, Func>,
+        runtime: &impl Runtime<MemoryArea = Area, Context = Ctx>,
+        ctx: &mut Ctx,
+    ) -> ModuleResult<Area>
+    where
+        Mod: Module,
+    {
         // Allocate code
         let mod_code = module.code();
         let relocs = module.relocs();
@@ -271,31 +353,15 @@ impl<Area: MemoryArea> Instance<Area> {
             code[..mod_code.len()].copy_from_slice(mod_code);
             Self::relocate(code, relocs, &funcs, &imports)
         };
-        let code = runtime.alloc_code(module.code().len(), relocate, &mut ctx)?;
+        let code = runtime.alloc_code(module.code().len(), relocate, ctx)?;
         if !relocated {
             // The runtime didn't properly relocate the code by calling the closure.
             return Err(ModuleError::RuntimeError);
         }
-
-        // Create instance
-        let mut instance = Self {
-            vmctx: VMContext::empty(module.vmctx_layout()),
-            start: module.start(),
-            imports,
-            items,
-            heaps,
-            tables,
-            globs,
-            funcs,
-            types,
-            code,
-        };
-
-        // Set the VMContext to its expected initial values
-        instance.init_vmctx();
-
-        Ok(instance)
+        Ok(code)
     }
+
+    // ———————————————————————————————— Helpers ————————————————————————————————— //
 
     /// Returns the index of the start function, if any.
     pub fn get_start(&self) -> Option<FuncIndex> {
@@ -529,6 +595,27 @@ impl<Area: MemoryArea> Instance<Area> {
             match glob {
                 Glob::Owned { init } => self.vmctx.set_glob_value(*init, idx),
                 Glob::Imported { .. } => self.vmctx.set_glob_ptr(self.get_glob_ptr(idx), idx),
+            }
+        }
+    }
+
+    fn init_tables<Mod>(&mut self, module: &Mod)
+    where
+        Mod: Module,
+    {
+        for segment in module.table_segments() {
+            let start = if let Some(_glob_idx) = segment.base {
+                // TODO: handle globals
+                todo!("Base are not yet supported for table segments");
+            } else {
+                segment.offset as usize
+            };
+            for (entry_idx, func_idx) in (start..).zip(segment.elements.iter()) {
+                let ptr = self.get_func_ptr(*func_idx);
+                match &mut self.tables[segment.table_index] {
+                    Table::Owned(table) => table[entry_idx] = ptr as u64,
+                    Table::Imported { .. } => panic!("Can't initialize imported tables"),
+                };
             }
         }
     }

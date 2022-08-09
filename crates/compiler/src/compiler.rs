@@ -1,5 +1,7 @@
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::vec::Vec;
+use core::mem;
 
 use cranelift_codegen::binemit::Reloc as CraneliftRelocKind;
 use cranelift_codegen::{ir, isa, settings, CodegenError, MachReloc};
@@ -10,8 +12,8 @@ use cranelift_wasm::{
 use collections::{EntityRef, FrozenMap, PrimaryMap, SecondaryMap};
 use wasm::{
     DataSegment, FuncIndex, FuncInfo, FuncType, GlobIndex, GlobInfo, GlobInit, HeapIndex, HeapInfo,
-    HeapKind, ItemRef, ModuleInfo, RefType, Reloc, RelocKind, TableInfo, TypeIndex, ValueType,
-    WasmModule,
+    HeapKind, ItemRef, ModuleInfo, RefType, Reloc, RelocKind, TableIndex, TableInfo, TableSegment,
+    TypeIndex, ValueType, WasmModule,
 };
 
 use crate::env;
@@ -60,44 +62,29 @@ impl X86_64Compiler {
             module_metadata: None,
         }
     }
-}
 
-impl Compiler for X86_64Compiler {
-    type Module = WasmModule;
-
-    fn parse(&mut self, wasm_bytecode: &[u8]) -> CompilerResult<()> {
-        let translation_result = translate_module(wasm_bytecode, &mut self.module);
-        match translation_result {
-            Ok(module) => {
-                self.module_metadata = Some(module);
-                Ok(())
-            }
-            Err(err) => Err(CompilerError::FailedToParse(err)),
-        }
-    }
-
-    fn compile(self) -> CompilerResult<WasmModule> {
-        let module_info = self.module.info;
-        let mut imported_funcs = module_info.imported_funcs;
-        let mut imported_heaps = module_info.imported_heaps;
-        let mut imported_tables = module_info.imported_tables;
-        let mut imported_globs = module_info.imported_globs;
-        let modules = FrozenMap::freeze(module_info.modules);
-
-        // Build the type info
+    /// Builds the type information.
+    fn build_types(module_info: &mut env::ModuleInfo) -> FrozenMap<TypeIndex, FuncType> {
         let mut types = PrimaryMap::with_capacity(module_info.types.len());
-        for (_ty_idx, ty) in module_info.types {
+        for (_ty_idx, ty) in mem::take(&mut module_info.types) {
             types.push(as_func_type(ty));
         }
-        let types = FrozenMap::freeze(types);
+        FrozenMap::freeze(types)
+    }
 
-        // Build the functions info
+    /// Builds the function information and collect exported names.
+    fn build_funcs(
+        module_info: &mut env::ModuleInfo,
+    ) -> (
+        FrozenMap<FuncIndex, FuncInfo>,
+        SecondaryMap<FuncIndex, Vec<String>>,
+    ) {
         let mut funcs = PrimaryMap::with_capacity(module_info.funcs.len());
         let mut funcs_names = SecondaryMap::new();
-        for (func_idx, func_names) in module_info.funcs {
+        for (func_idx, func_names) in mem::take(&mut module_info.funcs) {
             // We move out with `take` to avoid cloning the name
             let ty = TypeIndex::from_u32(func_names.entity.as_u32());
-            let func = if let Some(import_info) = imported_funcs[func_idx].take() {
+            let func = if let Some(import_info) = module_info.imported_funcs[func_idx].take() {
                 FuncInfo::Imported {
                     module: import_info.module,
                     name: import_info.name,
@@ -113,16 +100,23 @@ impl Compiler for X86_64Compiler {
             let func_idx = funcs.push(func);
             funcs_names[func_idx] = func_names.export_names;
         }
-        let funcs = FrozenMap::freeze(funcs);
+        (FrozenMap::freeze(funcs), funcs_names)
+    }
 
-        // Build the heaps info
+    /// Builds heap information and collect exported names.
+    fn build_heaps(
+        module_info: &mut env::ModuleInfo,
+    ) -> (
+        FrozenMap<HeapIndex, HeapInfo>,
+        SecondaryMap<HeapIndex, Vec<String>>,
+    ) {
         let mut heaps = PrimaryMap::new();
         let mut heaps_names = SecondaryMap::new();
-        for (heap_idx, heap) in module_info.heaps {
+        for (heap_idx, heap) in mem::take(&mut module_info.heaps) {
             let names = heap.export_names;
             let heap = heap.entity;
             let min_size = heap.minimum as u32;
-            let heap = if let Some(import_info) = imported_heaps[heap_idx].take() {
+            let heap = if let Some(import_info) = module_info.imported_heaps[heap_idx].take() {
                 HeapInfo::Imported {
                     module: import_info.module,
                     name: import_info.name,
@@ -144,17 +138,24 @@ impl Compiler for X86_64Compiler {
             let heap_idx = heaps.push(heap);
             heaps_names[heap_idx] = names;
         }
-        let heaps = FrozenMap::freeze(heaps);
+        (FrozenMap::freeze(heaps), heaps_names)
+    }
 
-        // Build the tables info
+    /// Builds table information and collect exported names.
+    fn build_tables(
+        module_info: &mut env::ModuleInfo,
+    ) -> (
+        FrozenMap<TableIndex, TableInfo>,
+        SecondaryMap<TableIndex, Vec<String>>,
+    ) {
         let mut tables = PrimaryMap::new();
         let mut tables_names = SecondaryMap::new();
-        for (table_idx, table) in module_info.tables {
+        for (table_idx, table) in mem::take(&mut module_info.tables) {
             // TODO: keep type information into `TableInfo`
             let names = table.export_names;
             let table = table.entity;
             let ty = as_ref_type(table.wasm_ty).expect("Table of non-reference type");
-            let table = if let Some(import_info) = imported_tables[table_idx].take() {
+            let table = if let Some(import_info) = module_info.imported_tables[table_idx].take() {
                 TableInfo::Imported {
                     module: import_info.module,
                     name: import_info.name,
@@ -170,16 +171,23 @@ impl Compiler for X86_64Compiler {
             let table_idx = tables.push(table);
             tables_names[table_idx] = names;
         }
-        let tables = FrozenMap::freeze(tables);
+        (FrozenMap::freeze(tables), tables_names)
+    }
 
-        // Build the globals info
+    /// Builds global information and collect exported names.
+    fn build_globs(
+        module_info: &mut env::ModuleInfo,
+    ) -> (
+        FrozenMap<GlobIndex, GlobInfo>,
+        SecondaryMap<GlobIndex, Vec<String>>,
+    ) {
         let mut globs = PrimaryMap::new();
         let mut globs_names = SecondaryMap::new();
-        for (glob_idx, glob) in module_info.globs {
+        for (glob_idx, glob) in mem::take(&mut module_info.globs) {
             let names = glob.export_names;
             let glob = glob.entity;
             // We move out with `take` to avoid cloning the name
-            let glob = if let Some(import_info) = imported_globs[glob_idx].take() {
+            let glob = if let Some(import_info) = module_info.imported_globs[glob_idx].take() {
                 GlobInfo::Imported {
                     module: import_info.module,
                     name: import_info.name,
@@ -191,11 +199,13 @@ impl Compiler for X86_64Compiler {
             let glob_idx = globs.push(glob);
             globs_names[glob_idx] = names;
         }
-        let globs = FrozenMap::freeze(globs);
+        (FrozenMap::freeze(globs), globs_names)
+    }
 
-        // Build the data segments
+    /// Builds data segments.
+    fn build_segments(module_info: &mut env::ModuleInfo) -> Vec<DataSegment> {
         let mut segments = Vec::with_capacity(module_info.segments.len());
-        for segment in module_info.segments {
+        for segment in module_info.segments.drain(..) {
             segments.push(DataSegment {
                 heap_index: HeapIndex::from_u32(segment.memory_index.as_u32()),
                 base: segment
@@ -205,14 +215,68 @@ impl Compiler for X86_64Compiler {
                 data: segment.data,
             })
         }
+        segments
+    }
+
+    /// Builds table segments (elements).
+    fn build_elements(module_info: &mut env::ModuleInfo) -> Vec<TableSegment> {
+        let mut elements = Vec::with_capacity(module_info.elements.len());
+        for segment in module_info.elements.drain(..) {
+            elements.push(TableSegment {
+                table_index: TableIndex::from_u32(segment.table_index.as_u32()),
+                base: segment
+                    .base
+                    .map(|glob_idx| GlobIndex::from_u32(glob_idx.as_u32())),
+                offset: segment.offset,
+                elements: segment
+                    .elements
+                    .iter()
+                    .map(|func_idx| FuncIndex::from_u32(func_idx.as_u32()))
+                    .collect(),
+            })
+        }
+        elements
+    }
+}
+
+impl Compiler for X86_64Compiler {
+    type Module = WasmModule;
+
+    fn parse(&mut self, wasm_bytecode: &[u8]) -> CompilerResult<()> {
+        let translation_result = translate_module(wasm_bytecode, &mut self.module);
+        match translation_result {
+            Ok(module) => {
+                self.module_metadata = Some(module);
+                Ok(())
+            }
+            Err(err) => Err(CompilerError::FailedToParse(err)),
+        }
+    }
+
+    fn compile(self) -> CompilerResult<WasmModule> {
+        let mut module_info = self.module.info;
+        // let mut imported_funcs = module_info.imported_funcs;
+        // let mut imported_heaps = module_info.imported_heaps;
+        // let mut imported_tables = module_info.imported_tables;
+        // let mut imported_globs = module_info.imported_globs;
+
+        let types = Self::build_types(&mut module_info);
+        let (funcs, funcs_names) = Self::build_funcs(&mut module_info);
+        let (heaps, heaps_names) = Self::build_heaps(&mut module_info);
+        let (globs, globs_names) = Self::build_globs(&mut module_info);
+        let (tables, tables_names) = Self::build_tables(&mut module_info);
+        let segments = Self::build_segments(&mut module_info);
+        let elements = Self::build_elements(&mut module_info);
+        let modules = FrozenMap::freeze(module_info.modules);
 
         // Find start function, if any
         let start = module_info
             .start
             .map(|idx| FuncIndex::from_u32(idx.as_u32()));
 
-        let mut mod_info =
-            ModuleInfo::new(funcs, types, heaps, tables, globs, modules, segments, start);
+        let mut mod_info = ModuleInfo::new(
+            funcs, types, heaps, tables, globs, modules, segments, elements, start,
+        );
         for (func_idx, names) in funcs_names.iter() {
             mod_info.export_func(func_idx, names);
         }

@@ -91,6 +91,33 @@ fn data_segment() {
 }
 
 #[test]
+fn table_segment() {
+    let module = compile(
+        r#"
+        (module
+            (func $one (result i32)
+                i32.const 42
+            )
+            (func $two)
+            (table $table 2 funcref)
+            (elem (i32.const 0) $one $two)
+            (export "one" (func $one))
+            (export "two" (func $two))
+            (export "table" (table $table))
+        )
+    "#,
+    );
+    let runtime = Runtime::new();
+    let instance = Instance::instantiate(&module, vec![], &runtime).unwrap();
+    let one = instance.get_func_addr_by_name("one").unwrap() as u64;
+    let two = instance.get_func_addr_by_name("two").unwrap() as u64;
+    assert_eq!(
+        instance.get_table_by_name("table").unwrap().as_ref(),
+        &[one, two]
+    )
+}
+
+#[test]
 fn store_and_load() {
     let module = compile(
         r#"

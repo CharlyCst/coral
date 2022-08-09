@@ -3,7 +3,7 @@ use crate::alloc::vec::Vec;
 
 use crate::traits::{
     DataSegment, ExternRef64, FuncIndex, FuncInfo, FuncPtr, GlobIndex, GlobInfo, HeapIndex,
-    HeapInfo, ImportIndex, Reloc, TableIndex, TableInfo,
+    HeapInfo, ImportIndex, Reloc, TableIndex, TableInfo, TableSegment,
 };
 use crate::traits::{ItemRef, Module, VMContextLayout};
 use crate::{FuncType, RefType, TypeIndex};
@@ -71,6 +71,7 @@ pub struct ModuleInfo {
     globs: FrozenMap<GlobIndex, GlobInfo>,
     imports: FrozenMap<ImportIndex, String>,
     segments: Vec<DataSegment>,
+    elements: Vec<TableSegment>,
     start: Option<FuncIndex>,
 }
 
@@ -83,6 +84,7 @@ impl ModuleInfo {
         globs: FrozenMap<GlobIndex, GlobInfo>,
         imports: FrozenMap<ImportIndex, String>,
         segments: Vec<DataSegment>,
+        elements: Vec<TableSegment>,
         start: Option<FuncIndex>,
     ) -> Self {
         Self {
@@ -94,6 +96,7 @@ impl ModuleInfo {
             globs,
             imports,
             segments,
+            elements,
             start,
         }
     }
@@ -157,6 +160,7 @@ pub struct WasmModule {
     globs: FrozenMap<GlobIndex, GlobInfo>,
     imports: FrozenMap<ImportIndex, String>,
     segments: Vec<DataSegment>,
+    elements: Vec<TableSegment>,
     start: Option<FuncIndex>,
     code: Vec<u8>,
     relocs: Vec<Reloc>,
@@ -207,6 +211,7 @@ impl WasmModule {
             globs: info.globs,
             imports: info.imports,
             segments: info.segments,
+            elements: info.elements,
             start: info.start,
             code,
             relocs,
@@ -254,6 +259,10 @@ impl Module for WasmModule {
         &self.segments
     }
 
+    fn table_segments(&self) -> &[TableSegment] {
+        &self.elements
+    }
+
     fn relocs(&self) -> &[Reloc] {
         &self.relocs
     }
@@ -271,6 +280,7 @@ impl Module for WasmModule {
 
 static EMPTY_CODE: [u8; 0] = [];
 static EMPTY_SEGMENT: [DataSegment; 0] = [];
+static EMPTY_ELEMENTS: [TableSegment; 0] = [];
 static EMPTY_HEAPS: FrozenMap<HeapIndex, HeapInfo> = FrozenMap::empty();
 static EMPTY_GLOBS: FrozenMap<GlobIndex, GlobInfo> = FrozenMap::empty();
 static EMPTY_IMPORTS: FrozenMap<ImportIndex, String> = FrozenMap::empty();
@@ -389,6 +399,10 @@ impl Module for NativeModule {
 
     fn data_segments(&self) -> &[DataSegment] {
         &EMPTY_SEGMENT
+    }
+
+    fn table_segments(&self) -> &[TableSegment] {
+        &EMPTY_ELEMENTS
     }
 
     fn relocs(&self) -> &[Reloc] {
