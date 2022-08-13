@@ -10,8 +10,8 @@ members = [
     # Dependencies
     "crates/collections",
     "crates/compiler",
+    "crates/linker",
     "crates/wasm",
-    "crates/bindgen"
 ]
 
 [profile.kernel]

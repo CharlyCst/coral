@@ -22,8 +22,8 @@ run:
 userland:
     # Build userboot
     cd ./userland/userboot && cargo build --profile userland
-    cargo run -p coral-bindgen -- \
-        -o kernel/wasm/userboot.wasm \
+    cargo run --bin cold -- \
         target/wasm32-unknown-unknown/userland/userboot.wasm \
-        userland/userboot/bindgen.toml
+        coral userland/userboot/wasm/syscalls.wasm \
+        -o kernel/wasm/userboot.wasm
 
