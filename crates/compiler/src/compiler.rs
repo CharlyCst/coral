@@ -255,10 +255,6 @@ impl Compiler for X86_64Compiler {
 
     fn compile(self) -> CompilerResult<WasmModule> {
         let mut module_info = self.module.info;
-        // let mut imported_funcs = module_info.imported_funcs;
-        // let mut imported_heaps = module_info.imported_heaps;
-        // let mut imported_tables = module_info.imported_tables;
-        // let mut imported_globs = module_info.imported_globs;
 
         let types = Self::build_types(&mut module_info);
         let (funcs, funcs_names) = Self::build_funcs(&mut module_info);

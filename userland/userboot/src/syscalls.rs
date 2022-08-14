@@ -11,4 +11,11 @@ extern "C" {
         target_offset: u64,
         size: u64,
     );
+
+    pub fn module_create(
+        source: ExternRef,
+        offset: u64,
+        size: u64,
+    ) -> ExternRef;
 }
+

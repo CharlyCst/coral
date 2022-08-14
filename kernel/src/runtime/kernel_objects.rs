@@ -9,11 +9,15 @@ use core::marker::PhantomData;
 
 use crate::memory::Vma;
 use crate::syscalls::ExternRef;
+use wasm::WasmModule;
 
 use spin::Mutex;
 
 /// The currently active Virtual Memory Areas.
 pub static ACTIVE_VMA: KernelObjectCollection<Vma, VmaIndex> = KernelObjectCollection::new();
+
+/// The currently active WebAssembly modules.
+pub static ACTIVE_MODULES: KernelObjectCollection<WasmModule, ModuleIndex>= KernelObjectCollection::new();
 
 /// A collection of kernel objects.
 pub struct KernelObjectCollection<Obj, Idx> {
@@ -65,6 +69,11 @@ where
 #[derive(Debug, Clone, Copy)]
 pub struct VmaIndex(u32);
 
+/// An index representing a WebAssembly module.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy)]
+pub struct ModuleIndex(u32);
+
 impl KoIndex for VmaIndex {
     fn from(index: usize) -> Self {
         let idx = u32::try_from(index).expect("Invalid VMA index");
@@ -77,5 +86,20 @@ impl KoIndex for VmaIndex {
 
     fn into_externref(self) -> ExternRef {
         ExternRef::Vma(self)
+    }
+}
+
+impl KoIndex for ModuleIndex {
+    fn from(index: usize) -> Self {
+        let idx = u32::try_from(index).expect("Invalid module index");
+        ModuleIndex(idx)
+    }
+
+    fn into_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    fn into_externref(self) -> ExternRef {
+        ExternRef::Module(self)
     }
 }

@@ -32,6 +32,18 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     #[cfg(test)]
     test_main();
 
+    // Register runtime compiler
+    let compiler = Box::new(|wasm: &[u8]| {
+        let mut compiler = X86_64Compiler::new();
+        compiler
+            .parse(wasm)
+            .map_err(|err| kprintln!("Failed to parse: {:?}", err))?;
+        compiler
+            .compile()
+            .map_err(|err| kprintln!("Failed to compule: {:?}", err))
+    });
+    kernel::runtime::register_compiler(compiler);
+
     // Initialize the Coral native module
     let runtime = Runtime::new(allocator);
     let vga_buffer =

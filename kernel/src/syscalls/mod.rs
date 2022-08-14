@@ -3,11 +3,12 @@
 //! System Calls in Coral are provided as a native module, that can be linked to any Wasm module.
 
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
-use crate::runtime::{VmaIndex, ACTIVE_VMA};
+use crate::runtime::{compile, KoIndex, ModuleIndex, VmaIndex, ACTIVE_MODULES, ACTIVE_VMA};
 use wasm::{ExternRef64, FuncPtr, FuncType, NativeModule, NativeModuleBuilder, ValueType};
 
 // ————————————————————————————— Native Module —————————————————————————————— //
@@ -28,6 +29,14 @@ pub fn build_syscall_module(handles_table: Vec<ExternRef>) -> NativeModule {
                         ValueType::I64,
                     ],
                     vec![],
+                ),
+            )
+            .add_func(
+                String::from("module_create"),
+                FuncPtr::new(module_create as *mut u8),
+                FuncType::new(
+                    vec![ValueType::ExternRef, ValueType::I64, ValueType::I64],
+                    vec![ValueType::ExternRef],
                 ),
             )
             .add_table(String::from("handles"), handles_table)
@@ -52,6 +61,8 @@ pub enum ExternRef {
     Invalid,
     /// A virtual memory area.
     Vma(VmaIndex),
+    /// A WebAssembly module.
+    Module(ModuleIndex),
 }
 
 /// This value is used to assert a compile time that ExternRef is 8 bytes long.
@@ -69,6 +80,41 @@ impl ExternRef64 for ExternRef {
 }
 
 // —————————————————————————————— System Calls —————————————————————————————— //
+
+extern "sysv64" fn module_create(
+    source: ExternRef,
+    offset: WasmU64,
+    size: WasmU64,
+    _vmctx: VmCtx,
+) -> ExternRef {
+    let source = match source {
+        ExternRef::Vma(vma_idx) => vma_idx,
+        _ => todo!("Source handle is invalid"),
+    };
+    let source_vma = match ACTIVE_VMA.get(source) {
+        Some(vma) => vma,
+        None => todo!("Source VMA does not exist"),
+    };
+
+    let size = usize::try_from(size).expect("Invalid size");
+    let offset = usize::try_from(offset).expect("Invalid offset");
+
+    let source = source_vma.as_bytes();
+    let end = match offset.checked_add(size) {
+        Some(end) => end,
+        None => todo!("Invalid source range"),
+    };
+    if source.len() < end {
+        todo!("Source index out of bound");
+    }
+
+    let module = match compile(&source[offset..end]) {
+        Ok(module) => Arc::new(module),
+        Err(_) => todo!("Module failed to compile"),
+    };
+
+    ACTIVE_MODULES.insert(module).into_externref()
+}
 
 extern "sysv64" fn vma_write(
     source: ExternRef,
