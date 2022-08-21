@@ -11,17 +11,25 @@ use crate::compiler;
 use crate::compiler::Compiler;
 use crate::userspace_alloc::{MMapArea, Runtime};
 use wasm::{
-    ExternRef64, FuncPtr, FuncType, Instance, MemoryArea, Module, ModuleError, NativeModuleBuilder,
-    ValueType, WasmModule,
+    as_native_func, ExternRef64, Instance, MemoryArea, Module, ModuleError, NativeModuleBuilder,
+    WasmModule, WasmType,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(transparent)]
 struct ExternRef(*const u8);
 
-impl ExternRef64 for ExternRef {
-    fn to_u64(self) -> u64 {
+unsafe impl Send for ExternRef {}
+
+unsafe impl WasmType for ExternRef {
+    type Abi = ExternRef64;
+
+    fn into_abi(self) -> u64 {
         self.0 as u64
+    }
+
+    fn from_abi(val: u64) -> Self {
+        ExternRef(val as usize as *const _)
     }
 }
 
@@ -269,14 +277,47 @@ fn import_native_func() {
         "#,
     );
 
-    extern "sysv64" fn foreign_func(_vmctx: u64) -> i32 {
+    fn foreign_func() -> i32 {
         42
     }
-    let ty = FuncType::new(vec![], vec![ValueType::I32]);
+    as_native_func!(foreign_func; FOREIGN_FUNC; ret: i32);
+
     let imported_module = unsafe {
-        let the_answer = FuncPtr::new(foreign_func as *mut u8);
         NativeModuleBuilder::new()
-            .add_func(String::from("the_answer"), the_answer, ty)
+            .add_func(String::from("the_answer"), &FOREIGN_FUNC)
+            .build()
+    };
+    let answer = execute_0_deps(module, vec![("answer", imported_module)]);
+    assert_eq!(answer.return_value, 42);
+}
+
+#[test]
+fn multi_value_abi() {
+    let module = compile(
+        r#"
+        (module
+            (import "answer" "the_answer"
+                (func $the_answer (type $t))
+            )
+            (type $t (func (result i32 i32 i32)))
+            (func $call_imported (result i32)
+                call $the_answer
+                i32.add
+                i32.add
+            )
+            (export "main" (func $call_imported))
+        )
+        "#,
+    );
+
+    fn foreign_func() -> (i32, i32, i32) {
+        (10, 30, 2)
+    }
+    as_native_func!(foreign_func; FOREIGN_FUNC; ret: (i32, i32, i32));
+
+    let imported_module = unsafe {
+        NativeModuleBuilder::new()
+            .add_func(String::from("the_answer"), &FOREIGN_FUNC)
             .build()
     };
     let answer = execute_0_deps(module, vec![("answer", imported_module)]);
@@ -476,12 +517,12 @@ fn func_typecheck() {
         "#,
     );
 
-    extern "sysv64" fn foreign_func(_: i32, _vmctx: u64) {}
-    let ty = FuncType::new(vec![ValueType::I32], vec![]); // Bad type
+    fn foreign_func(_: i32) {}
+    as_native_func!(foreign_func; FOREIGN_FUNC; args: i32; ret: ());
+
     let imported_module = unsafe {
-        let the_answer = FuncPtr::new(foreign_func as *mut u8);
         NativeModuleBuilder::new()
-            .add_func(String::from("the_answer"), the_answer, ty)
+            .add_func(String::from("the_answer"), &FOREIGN_FUNC)
             .build()
     };
 

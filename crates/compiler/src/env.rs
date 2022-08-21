@@ -260,7 +260,7 @@ impl<'data> cw::ModuleEnvironment<'data> for ModuleEnvironment {
     fn declare_type_func(&mut self, wasm_func_type: cw::WasmFuncType) -> cw::WasmResult<()> {
         // A small type conversion function
         let mut wasm_to_ir = |ty: &WasmType| ir::AbiParam::new(self.info.wasm_to_ir_type(*ty));
-        let mut sig = ir::Signature::new(CallConv::SystemV);
+        let mut sig = ir::Signature::new(CallConv::WasmtimeSystemV);
         sig.params
             .extend(wasm_func_type.params().iter().map(&mut wasm_to_ir));
         sig.params.push(ir::AbiParam::special(

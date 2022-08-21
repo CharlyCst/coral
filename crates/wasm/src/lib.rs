@@ -8,8 +8,12 @@ mod modules;
 mod traits;
 mod vmctx;
 mod types;
+mod funcs;
+mod abi;
 
 pub use instances::*;
 pub use modules::*;
 pub use traits::*;
 pub use types::*;
+pub use funcs::*;
+pub use abi::*;

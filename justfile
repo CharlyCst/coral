@@ -9,8 +9,8 @@ help:
 test:
     # Compiler tests
     cd ./crates/compiler && cargo test
-    # Wasm tests -- for now only checking
-    cd ./crates/wasm && cargo check
+    # Wasm tests
+    cd ./crates/wasm && cargo test
     # Coral tests
     cd ./kernel && cargo test --profile kernel
 

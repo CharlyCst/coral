@@ -6,25 +6,29 @@
       (param $target externref)
       (param $source_offset i64)
       (param $target_offset i64)
-      (param $size i64)))
+      (param $size i64)
+      (result i32)))
   (type $pub_vma_write
     (func
       (param $source i32)
       (param $target i32)
       (param $source_offset i64)
       (param $target_offset i64)
-      (param $size i64)))
+      (param $size i64)
+      (result i32)))
   (type $module_create
     (func
       (param $source externref)
       (param $offset i64)
       (param $size   i64)
+      (result i32)
       (result externref)))
   (type $pub_module_create
     (func
       (param $source i32)
       (param $offset i64)
       (param $size   i64)
+      (result i32)
       (result i32)))
 
   ;; Imports

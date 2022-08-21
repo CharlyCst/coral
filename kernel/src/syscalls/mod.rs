@@ -4,12 +4,12 @@
 
 use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
+use crate::memory::Vma;
 use crate::runtime::{compile, KoIndex, ModuleIndex, VmaIndex, ACTIVE_MODULES, ACTIVE_VMA};
-use wasm::{ExternRef64, FuncPtr, FuncType, NativeModule, NativeModuleBuilder, ValueType};
+use wasm::{as_native_func, ExternRef64, NativeModule, NativeModuleBuilder, WasmType};
 
 // ————————————————————————————— Native Module —————————————————————————————— //
 
@@ -17,41 +17,14 @@ use wasm::{ExternRef64, FuncPtr, FuncType, NativeModule, NativeModuleBuilder, Va
 pub fn build_syscall_module(handles_table: Vec<ExternRef>) -> NativeModule {
     unsafe {
         NativeModuleBuilder::new()
-            .add_func(
-                String::from("vma_write"),
-                FuncPtr::new(vma_write as *mut u8),
-                FuncType::new(
-                    vec![
-                        ValueType::ExternRef,
-                        ValueType::ExternRef,
-                        ValueType::I64,
-                        ValueType::I64,
-                        ValueType::I64,
-                    ],
-                    vec![],
-                ),
-            )
-            .add_func(
-                String::from("module_create"),
-                FuncPtr::new(module_create as *mut u8),
-                FuncType::new(
-                    vec![ValueType::ExternRef, ValueType::I64, ValueType::I64],
-                    vec![ValueType::ExternRef],
-                ),
-            )
+            .add_func(String::from("vma_write"), &VMA_WRITE)
+            .add_func(String::from("module_create"), &MODULE_CREATE)
             .add_table(String::from("handles"), handles_table)
             .build()
     }
 }
 
 // ————————————————————————————————— Types —————————————————————————————————— //
-
-/// The Virtual Machine Context, passed as argument to all instance functions, including native
-/// functions.
-type VmCtx = u64;
-
-/// A WebAssembly u64.
-type WasmU64 = u64;
 
 /// A WebAssembly externref.
 #[repr(u8)]
@@ -69,101 +42,151 @@ pub enum ExternRef {
 #[doc(hidden)]
 const _EXTERNREF_SIZE_ASSERT: [u8; 8] = [0; mem::size_of::<ExternRef>()];
 
-impl ExternRef64 for ExternRef {
-    fn to_u64(self) -> u64 {
-        // SAFETY: transmute check for the size at compile time, and because all 64 values are
-        // valid u64 the result is always valid.
-        //
-        // TODO: can we do that without transmute?
+unsafe impl WasmType for ExternRef {
+    type Abi = ExternRef64;
+
+    fn into_abi(self) -> u64 {
+        // SAFETY: All valid ExternRef are valid u64.
         unsafe { mem::transmute(self) }
+    }
+
+    fn from_abi(val: u64) -> Self {
+        // SAFETY: as WebAssembly can not modifie or create new reference values, all the values
+        // received here are emitted by `Self::into_abi`.
+        unsafe { mem::transmute(val) }
+    }
+}
+
+// —————————————————————————————— Return Types —————————————————————————————— //
+
+#[derive(Clone, Copy)]
+#[repr(i32)]
+pub enum SyscallResult {
+    Success = 0,
+    InvalidParams = 1,
+    InternalError = 2,
+    UnknownError = 3,
+}
+
+unsafe impl WasmType for SyscallResult {
+    type Abi = i32;
+
+    fn into_abi(self) -> Self::Abi {
+        self as i32
+    }
+
+    fn from_abi(_val: Self::Abi) -> Self {
+        // Do we need that conversion? Userspace has no reason to send errors
+        todo!();
     }
 }
 
 // —————————————————————————————— System Calls —————————————————————————————— //
 
-extern "sysv64" fn module_create(
-    source: ExternRef,
-    offset: WasmU64,
-    size: WasmU64,
-    _vmctx: VmCtx,
-) -> ExternRef {
-    let source = match source {
-        ExternRef::Vma(vma_idx) => vma_idx,
-        _ => todo!("Source handle is invalid"),
-    };
-    let source_vma = match ACTIVE_VMA.get(source) {
-        Some(vma) => vma,
-        None => todo!("Source VMA does not exist"),
+as_native_func!(module_create; MODULE_CREATE; args: ExternRef u64 u64; ret: (SyscallResult, ExternRef));
+fn module_create(source: ExternRef, offset: u64, size: u64) -> (SyscallResult, ExternRef) {
+    let source_vma = match get_vma(source) {
+        Ok(vma) => vma,
+        Err(err) => return (err, ExternRef::Invalid),
     };
 
-    let size = usize::try_from(size).expect("Invalid size");
-    let offset = usize::try_from(offset).expect("Invalid offset");
-
-    let source = source_vma.as_bytes();
-    let end = match offset.checked_add(size) {
-        Some(end) => end,
-        None => todo!("Invalid source range"),
+    let source = match vma_as_buf(&source_vma, offset, size) {
+        Ok(buf) => buf,
+        Err(err) => return (err, ExternRef::Invalid),
     };
-    if source.len() < end {
-        todo!("Source index out of bound");
-    }
 
-    let module = match compile(&source[offset..end]) {
+    let module = match compile(&source) {
         Ok(module) => Arc::new(module),
-        Err(_) => todo!("Module failed to compile"),
+        Err(_) => return (SyscallResult::InvalidParams, ExternRef::Invalid),
     };
 
-    ACTIVE_MODULES.insert(module).into_externref()
+    let handle = ACTIVE_MODULES.insert(module).into_externref();
+    (SyscallResult::Success, handle)
 }
 
-extern "sysv64" fn vma_write(
+as_native_func!(vma_write; VMA_WRITE; args: ExternRef ExternRef u64 u64 u64; ret: SyscallResult);
+fn vma_write(
     source: ExternRef,
     target: ExternRef,
-    source_offset: WasmU64,
-    target_offset: WasmU64,
-    size: WasmU64,
-    _vmctx: VmCtx,
-) {
-    let source = match source {
-        ExternRef::Vma(vma_idx) => vma_idx,
-        _ => todo!("Source handle is invalid"), // Return an error
+    source_offset: u64,
+    target_offset: u64,
+    size: u64,
+) -> SyscallResult {
+    let source_vma = match get_vma(source) {
+        Ok(vma) => vma,
+        Err(err) => return err,
     };
-    let target = match target {
-        ExternRef::Vma(vma_idx) => vma_idx,
-        _ => todo!("Target handle is invalid"),
-    };
-    let source_vma = match ACTIVE_VMA.get(source) {
-        Some(vma) => vma,
-        None => todo!("Source VMA does not exist"),
-    };
-    let target_vma = match ACTIVE_VMA.get(target) {
-        Some(vma) => vma,
-        None => todo!("Target VMA does not exist"),
+    let mut target_vma = match get_vma(target) {
+        Ok(vma) => vma,
+        Err(err) => return err,
     };
 
-    let size = usize::try_from(size).expect("Invalid size");
-    let source_offset = usize::try_from(source_offset).expect("Invalid source offset");
-    let target_offset = usize::try_from(target_offset).expect("Invalid target offset");
+    let source = match vma_as_buf(&source_vma, source_offset, size) {
+        Ok(buf) => buf,
+        Err(err) => return err,
+    };
+    let target = match vma_as_buf_mut(&mut target_vma, target_offset, size) {
+        Ok(buf) => buf,
+        Err(err) => return err,
+    };
 
-    // SAFETY: TODO: what are the safety condition? Assume that userspace synchronized correctly?
-    unsafe {
-        let source = source_vma.unsafe_as_bytes_mut();
-        let target = target_vma.unsafe_as_bytes_mut();
+    target.copy_from_slice(source);
+    SyscallResult::Success
+}
 
-        let source_end = match source_offset.checked_add(size) {
-            Some(source_end) => source_end,
-            None => todo!("Invalid source range"),
-        };
-        let target_end = match target_offset.checked_add(size) {
-            Some(target_end) => target_end,
-            None => todo!("Invalid source range"),
-        };
-        if source.len() < source_end {
-            todo!("Source index out of bound");
+// ————————————————————————————————— Utils —————————————————————————————————— //
+
+/// Returns the VMA corresponding to the given handle, if any.
+fn get_vma(handle: ExternRef) -> Result<Arc<Vma>, SyscallResult> {
+    let vma_idx = match handle {
+        ExternRef::Vma(vma) => vma,
+        _ => {
+            crate::kprintln!("Syscall Error: expected VMA, got {:?}", handle);
+            return Err(SyscallResult::InvalidParams);
         }
-        if target.len() < target_end {
-            todo!("Target index out of bound");
+    };
+    match ACTIVE_VMA.get(vma_idx) {
+        Some(vma) => Ok(vma),
+        None => {
+            crate::kprintln!("Syscall Error: VMA does not exists");
+            Err(SyscallResult::InvalidParams)
         }
-        target[target_offset..target_end].copy_from_slice(&source[source_offset..source_end]);
+    }
+}
+
+/// Returns a view of the given VMA at the given offset and with the given size.
+fn vma_as_buf(vma: &Vma, offset: u64, size: u64) -> Result<&[u8], SyscallResult> {
+    // TODO: handle permissions here
+    let offset = usize::try_from(offset).map_err(|_| SyscallResult::InvalidParams)?;
+    let size = usize::try_from(size).map_err(|_| SyscallResult::InvalidParams)?;
+    let end = match offset.checked_add(size) {
+        Some(end) => end,
+        None => return Err(SyscallResult::InvalidParams),
+    };
+
+    let buf = vma.as_bytes();
+    if buf.len() < end {
+        Err(SyscallResult::InvalidParams)
+    } else {
+        Ok(&buf[offset..end])
+    }
+}
+
+/// Returns a mutable view of the given VMA at the given offset and with the given size.
+fn vma_as_buf_mut(vma: &mut Arc<Vma>, offset: u64, size: u64) -> Result<&mut [u8], SyscallResult> {
+    // TODO: handle permissions here
+    let offset = usize::try_from(offset).map_err(|_| SyscallResult::InvalidParams)?;
+    let size = usize::try_from(size).map_err(|_| SyscallResult::InvalidParams)?;
+    let end = match offset.checked_add(size) {
+        Some(end) => end,
+        None => return Err(SyscallResult::InvalidParams),
+    };
+
+    // TODO: what are the safety conditions here?
+    let buf = unsafe { vma.unsafe_as_bytes_mut() };
+    if buf.len() < end {
+        Err(SyscallResult::InvalidParams)
+    } else {
+        Ok(&mut buf[offset..end])
     }
 }

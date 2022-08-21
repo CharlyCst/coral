@@ -1,9 +1,11 @@
 use crate::alloc::string::{String, ToString};
 use crate::alloc::vec::Vec;
 
+use crate::abi::{ExternRef64, WasmParams, WasmResults, WasmType};
+use crate::funcs::NativeFunc;
 use crate::traits::{
-    DataSegment, ExternRef64, FuncIndex, FuncInfo, FuncPtr, GlobIndex, GlobInfo, HeapIndex,
-    HeapInfo, ImportIndex, Reloc, TableIndex, TableInfo, TableSegment,
+    DataSegment, FuncIndex, FuncInfo, FuncPtr, GlobIndex, GlobInfo, HeapIndex, HeapInfo,
+    ImportIndex, Reloc, TableIndex, TableInfo, TableSegment,
 };
 use crate::traits::{ItemRef, Module, VMContextLayout};
 use crate::{FuncType, RefType, TypeIndex};
@@ -327,11 +329,14 @@ impl NativeModuleBuilder {
     ///
     /// SAFETY: there is no typecheck yet! The function might be called with unexpected number of
     /// arguments from Wasm instances!
-    ///
-    /// TODO: add typecheck (i.e. ask or infer the equivalent Wasm type of the function).
-    pub unsafe fn add_func(mut self, name: String, func: FuncPtr, ty: FuncType) -> Self {
-        let ty = self.types.push(ty);
-        let idx = self.funcs.push(FuncInfo::Native { ptr: func, ty });
+    pub unsafe fn add_func<P, R>(mut self, name: String, func: &NativeFunc<P, R>) -> Self
+    where
+        P: WasmParams,
+        R: WasmResults,
+    {
+        let ptr = FuncPtr::from_native_func(func);
+        let ty = self.types.push(func.ty());
+        let idx = self.funcs.push(FuncInfo::Native { ptr, ty });
         self.exported_names.insert(name, ItemRef::Func(idx));
         self
     }
@@ -339,10 +344,10 @@ impl NativeModuleBuilder {
     /// Add a native table to the module.
     ///
     /// TODO: add typecheck info (i.e. type of the table elements).
-    pub fn add_table(mut self, name: String, table: Vec<impl ExternRef64>) -> Self {
+    pub fn add_table(mut self, name: String, table: Vec<impl WasmType<Abi = ExternRef64>>) -> Self {
         let table = table
             .iter()
-            .map(|externref| externref.to_u64())
+            .map(|externref| externref.into_abi())
             .collect::<Vec<u64>>();
         let idx = self.tables.push(TableInfo::Native {
             ptr: table.into_boxed_slice(),

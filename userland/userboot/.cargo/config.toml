@@ -3,5 +3,6 @@ target = "wasm32-unknown-unknown"
 
 [target.wasm32-unknown-unknown]
 rustflags = [
-    "-C", "link-arg=-zstack-size=0x10000"
+    "-C", "link-arg=-zstack-size=0x10000",
+    "-C", "target-feature=+multivalue"
 ]

@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use crate::memory::{Vma, VmaAllocator};
 use crate::runtime::{VmaIndex, ACTIVE_VMA};
 use crate::syscalls::ExternRef;
-use wasm::{ExternRef64, HeapKind, Instance, Module, ModuleError, RefType};
+use wasm::{HeapKind, Instance, Module, ModuleError, RefType, WasmType};
 
 use super::KoIndex;
 
@@ -91,7 +91,7 @@ unsafe impl wasm::Runtime for Runtime {
         } else {
             min_size
         } as usize;
-        let mut table = vec![ExternRef::Invalid.to_u64(); size].into_boxed_slice();
+        let mut table = vec![ExternRef::Invalid.into_abi(); size].into_boxed_slice();
 
         if ctx.is_first_externref_table && ty == RefType::ExternRef {
             ctx.is_first_externref_table = false;
@@ -101,7 +101,7 @@ unsafe impl wasm::Runtime for Runtime {
                 if idx >= table.len() {
                     break;
                 }
-                table[idx] = vma.into_externref().to_u64()
+                table[idx] = vma.into_externref().into_abi()
             }
         }
 

@@ -7,6 +7,7 @@ use core::ptr::NonNull;
 
 use collections::{entity_impl, FrozenMap, HashMap};
 
+use crate::funcs::NativeFunc;
 use crate::types::{FuncType, RefType};
 
 // ——————————————————————————————— Allocator ———————————————————————————————— //
@@ -137,13 +138,16 @@ impl FuncPtr {
         }
     }
 
+    /// Creates a raw function pointer from a native function.
+    pub fn from_native_func<P, R>(func: &NativeFunc<P, R>) -> Self {
+        Self {
+            ptr: NonNull::new(func.ptr() as *mut _).unwrap(),
+        }
+    }
+
     pub fn as_ptr(&self) -> *const u8 {
         self.ptr.as_ptr()
     }
-}
-
-pub trait ExternRef64: Copy {
-    fn to_u64(self) -> u64;
 }
 
 pub enum FuncInfo {
