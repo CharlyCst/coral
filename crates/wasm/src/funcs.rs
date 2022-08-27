@@ -83,8 +83,8 @@ macro_rules! as_native_func {
             #[allow(improper_ctypes_definitions)]
             unsafe extern "sysv64" fn wasm_to_host(
                 $($args_n: <<$args_t as $crate::WasmType>::Abi as $crate::WasmBaseType>::Abi,)*
-                retptr: <$ret as $crate::HostReturnAbi>::ReturnPtr,
                 _vmctx: *mut u8,
+                retptr: <$ret as $crate::HostReturnAbi>::ReturnPtr,
             ) -> <$ret as $crate::HostReturnAbi>::ReturnAbi
             {
                 let ret = $func($(<$args_t as $crate::WasmType>::from_abi($args_n),)*);
