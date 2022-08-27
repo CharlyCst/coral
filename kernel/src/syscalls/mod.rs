@@ -17,6 +17,7 @@ use wasm::{as_native_func, ExternRef64, NativeModule, NativeModuleBuilder, WasmT
 pub fn build_syscall_module(handles_table: Vec<ExternRef>) -> NativeModule {
     unsafe {
         NativeModuleBuilder::new()
+            .add_func(String::from("handle_kind"), &HANDLE_KIND)
             .add_func(String::from("vma_write"), &VMA_WRITE)
             .add_func(String::from("module_create"), &MODULE_CREATE)
             .add_table(String::from("handles"), handles_table)
@@ -81,7 +82,37 @@ unsafe impl WasmType for SyscallResult {
     }
 }
 
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub enum HandleKind {
+    Invalid = 0,
+    Vma = 1,
+    Module = 2,
+}
+
+unsafe impl WasmType for HandleKind {
+    type Abi = u32;
+
+    fn into_abi(self) -> <Self::Abi as wasm::WasmBaseType>::Abi {
+        self as u32
+    }
+
+    fn from_abi(val: <Self::Abi as wasm::WasmBaseType>::Abi) -> Self {
+        // We should never need that conversion
+        todo!();
+    }
+}
+
 // —————————————————————————————— System Calls —————————————————————————————— //
+
+as_native_func!(handle_kind; HANDLE_KIND; args: ExternRef; ret: HandleKind);
+fn handle_kind(handle: ExternRef) -> HandleKind {
+    match handle {
+        ExternRef::Invalid => HandleKind::Invalid,
+        ExternRef::Vma(_) => HandleKind::Vma,
+        ExternRef::Module(_) => HandleKind::Module,
+    }
+}
 
 as_native_func!(module_create; MODULE_CREATE; args: ExternRef u64 u64; ret: (SyscallResult, ExternRef));
 fn module_create(source: ExternRef, offset: u64, size: u64) -> (SyscallResult, ExternRef) {
