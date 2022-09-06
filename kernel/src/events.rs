@@ -14,8 +14,7 @@ use futures::StreamExt;
 use spin::Mutex;
 
 use crate::scheduler::{Scheduler, Task};
-use crate::wasm::{AsArgs, Component};
-use wasm::FuncIndex;
+use crate::wasm::{AsArgs, Component, ComponentFunc};
 
 // —————————————————————————————— Known Events —————————————————————————————— //
 
@@ -121,7 +120,7 @@ impl<T> Stream for SourceStream<T> {
 /// A dispatcher is connected to an event source, and can be scheduled to asyncronously wait on new
 /// events and dispatch them to listeners.
 pub struct EventDispatcher<T> {
-    listeners: Mutex<Vec<(Arc<Component>, FuncIndex)>>,
+    listeners: Mutex<Vec<(Arc<Component>, ComponentFunc)>>,
     source: Arc<EventSource<T>>,
 }
 
@@ -144,7 +143,7 @@ where
     }
 
     /// Registers a new listener for this event dispatcher.
-    pub fn add_listener(&self, component: Arc<Component>, handler: FuncIndex) {
+    pub fn add_listener(&self, component: Arc<Component>, handler: ComponentFunc) {
         let mut listeners = self.listeners.lock();
         listeners.push((component, handler));
     }

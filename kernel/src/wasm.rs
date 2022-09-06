@@ -1,16 +1,37 @@
 //! WebAssembly Abstractions
 
+use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::arch::asm;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::kprintln;
 use crate::memory::Vma;
+use crate::runtime::Runtime;
 use crate::scheduler::Task;
-use wasm::{FuncIndex, Instance};
+use collections::{entity_impl, PrimaryMap};
+use wasm::{FuncIndex, Instance, Module, ModuleResult};
 
 pub struct Component {
-    instance: Instance<Arc<Vma>>,
+    /// The instancees within this component.
+    instances: PrimaryMap<InstanceIndex, Arc<Instance<Arc<Vma>>>>,
+    /// Is the component runing?
     busy: AtomicBool,
+    /// The available imports for the next module instantiation.
+    next_imports: Vec<(String, Arc<Instance<Arc<Vma>>>)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[repr(transparent)]
+pub struct InstanceIndex(u32);
+entity_impl!(InstanceIndex);
+
+/// The ID of a function withing a component.
+#[derive(Clone, Copy)]
+pub struct ComponentFunc {
+    instance: InstanceIndex,
+    func: FuncIndex,
 }
 
 #[must_use]
@@ -25,20 +46,61 @@ impl RunStatus {
 }
 
 impl Component {
-    pub fn new(instance: Instance<Arc<Vma>>) -> Self {
+    pub fn new() -> Self {
         let component = Self {
-            instance,
+            instances: PrimaryMap::new(),
             busy: AtomicBool::new(false),
+            next_imports: Vec::new(),
         };
-        if let Some(func) = component.instance.get_start() {
-            // We know the component is not busy yet
-            component.try_run(func, &Args::new()).ok();
-        }
 
         component
     }
 
-    pub fn try_run(&self, func: FuncIndex, args: &Args) -> RunStatus {
+    /// Add an import, which can be used by instances during future instantiations.
+    pub fn push_import(&mut self, name: String, idx: InstanceIndex) {
+        let instance = self.instances[idx].clone();
+        self.next_imports.push((name, instance));
+    }
+
+    /// Add an instance to this component.
+    pub fn add_instance(
+        &mut self,
+        module: &impl Module,
+        runtime: &Runtime,
+    ) -> ModuleResult<InstanceIndex> {
+        // TODO: find a more elegant way of resolving imports
+        let imports: Vec<(&str, Arc<Instance<Arc<Vma>>>)> = self
+            .next_imports
+            .iter()
+            .map(|(name, instance)| (name.as_str(), instance.clone()))
+            .collect();
+        let instance = Arc::new(Instance::instantiate(module, &imports, runtime)?);
+        let idx = self.instances.push(instance);
+        if let Some(func) = self.instances[idx].get_start() {
+            let func = ComponentFunc {
+                instance: idx,
+                func,
+            };
+            match self.try_run(func, &Args::new()) {
+                RunStatus::Ok => {} // Fine
+                RunStatus::Busy => {
+                    // TODO: How can we run init while the component is already executing?
+                    kprintln!("WARNING: component is buzy, instance can't be initialized");
+                }
+            }
+        }
+        Ok(idx)
+    }
+
+    /// Get a function handle.
+    pub fn get_func(&self, func: &str, instance: InstanceIndex) -> Option<ComponentFunc> {
+        match self.instances[instance].get_func_index_by_name(func) {
+            Some(func) => Some(ComponentFunc { instance, func }),
+            None => None,
+        }
+    }
+
+    pub fn try_run(&self, func: ComponentFunc, args: &Args) -> RunStatus {
         // Try to acquire component
         if self
             .busy
@@ -60,13 +122,14 @@ impl Component {
     /// See [OsDev wiki](https://wiki.osdev.org/System_V_ABI), [(old but rendered)
     /// spec](https://www.uclibc.org/docs/psABI-x86_64.pdf), and [newer
     /// spec](https://gitlab.com/x86-psABIs).
-    fn call(&self, func: FuncIndex, args: &Args) {
+    fn call(&self, func: ComponentFunc, args: &Args) {
         let args = args.as_slice();
 
         // Instance pointers
-        let func_ptr = self.instance.get_func_addr_by_index(func);
-        let func_ty = self.instance.get_func_type_by_index(func);
-        let vmctx = self.instance.get_vmctx_ptr() as u64;
+        let instance = &self.instances[func.instance];
+        let func_ptr = instance.get_func_addr_by_index(func.func);
+        let func_ty = instance.get_func_type_by_index(func.func);
+        let vmctx = instance.get_vmctx_ptr() as u64;
 
         assert_eq!(
             func_ty.args().len(),
@@ -142,12 +205,12 @@ impl Component {
         }
     }
 
-    pub fn run(self: Arc<Self>, func: FuncIndex, args: Args) -> Task {
+    pub fn run(self: Arc<Self>, func: ComponentFunc, args: Args) -> Task {
         Task::new(self.run_promise(func, args))
     }
 
     /// Run the given function from a component.
-    async fn run_promise(self: Arc<Self>, func: FuncIndex, args: Args) {
+    async fn run_promise(self: Arc<Self>, func: ComponentFunc, args: Args) {
         match self.try_run(func, &args) {
             RunStatus::Ok => {}
             RunStatus::Busy => todo!("Handle busy components"),

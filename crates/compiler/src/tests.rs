@@ -116,7 +116,7 @@ fn table_segment() {
     "#,
     );
     let runtime = Runtime::new();
-    let instance = Instance::instantiate(&module, vec![], &runtime).unwrap();
+    let instance = Instance::instantiate(&module, &[], &runtime).unwrap();
     let one = instance.get_func_addr_by_name("one").unwrap() as u64;
     let two = instance.get_func_addr_by_name("two").unwrap() as u64;
     assert_eq!(
@@ -570,7 +570,7 @@ fn compile(wat: &str) -> WasmModule {
 /// Execute a module, with no arguments passed to the main function.
 fn execute_0(module: impl Module) -> i32 {
     let runtime = Runtime::new();
-    let mut instance = Instance::instantiate(&module, vec![], &runtime).unwrap();
+    let mut instance = Instance::instantiate(&module, &[], &runtime).unwrap();
     call_0(&mut instance)
 }
 
@@ -578,7 +578,7 @@ fn execute_0(module: impl Module) -> i32 {
 fn execute_2(module: impl Module, arg1: i32, arg2: i32) -> i32 {
     let runtime = Runtime::new();
 
-    let instance = Instance::instantiate(&module, vec![], &runtime).unwrap();
+    let instance = Instance::instantiate(&module, &[], &runtime).unwrap();
 
     unsafe {
         let fun = "main";
@@ -608,13 +608,11 @@ fn execute_0_deps(
     let dependencies = dependencies
         .into_iter()
         .map(|(name, module)| {
-            (
-                name,
-                Instance::instantiate(&module, vec![], &runtime).unwrap(),
-            )
+            let dependency = Arc::new(Instance::instantiate(&module, &[], &runtime).unwrap());
+            (name, dependency)
         })
-        .collect::<Vec<(&str, Instance<Arc<MMapArea>>)>>();
-    let mut instance = Instance::instantiate(&module, dependencies, &runtime).unwrap();
+        .collect::<Vec<(&str, Arc<Instance<Arc<MMapArea>>>)>>();
+    let mut instance = Instance::instantiate(&module, &dependencies, &runtime).unwrap();
 
     ExecutionResult {
         return_value: call_0(&mut instance),
@@ -648,11 +646,11 @@ fn type_error(module: impl Module, dependencies: Vec<(&str, impl Module)>) -> bo
         .map(|(name, module)| {
             (
                 name,
-                Instance::instantiate(&module, vec![], &runtime).unwrap(),
+                Arc::new(Instance::instantiate(&module, &[], &runtime).unwrap()),
             )
         })
-        .collect::<Vec<(&str, Instance<Arc<MMapArea>>)>>();
-    match Instance::instantiate(&module, dependencies, &runtime) {
+        .collect::<Vec<(&str, Arc<Instance<Arc<MMapArea>>>)>>();
+    match Instance::instantiate(&module, &dependencies, &runtime) {
         Err(ModuleError::TypeError) => true,
         _ => false,
     }

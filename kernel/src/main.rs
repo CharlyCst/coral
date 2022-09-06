@@ -5,6 +5,7 @@
 
 extern crate alloc;
 
+use alloc::string::String;
 use alloc::sync::Arc;
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
@@ -44,37 +45,42 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     });
     kernel::runtime::register_compiler(compiler);
 
-    // Initialize the Coral native module
-    let runtime = Runtime::new(allocator);
-    let vga_buffer =
-        unsafe { Vma::from_raw(NonNull::new(0xb8000 as *mut u8).unwrap(), 80 * 25 * 2) };
-    let vga_idx = ACTIVE_VMA.insert(Arc::new(vga_buffer)).into_externref();
-    let coral_handles_table = vec![vga_idx];
-    let coral_module = kernel::syscalls::build_syscall_module(coral_handles_table);
-    let coral_instance = runtime
-        .instantiate(&coral_module, Vec::new())
-        .expect("Failed to instantiate coral syscalls module");
-
     // Compile & initialize userboot
     let mut compiler = X86_64Compiler::new();
     compiler
         .parse(WASM_USERBOOT)
         .expect("Failed parsing userboot");
     let user_module = compiler.compile().expect("Failed compiling userboot");
-    let userboot = runtime
-        .instantiate(&user_module, vec![("coral", coral_instance)])
-        .expect("Failed to instantiate userboot");
-    let userboot_init = userboot
-        .get_func_index_by_name("init")
-        .expect("Failed to retrieve 'init' from userboot instance");
-    let userboot_tick = userboot
-        .get_func_index_by_name("tick")
-        .expect("Failed to retrieve 'tick' from userboot instance");
-    let userboot_key = userboot
-        .get_func_index_by_name("press_key")
-        .expect("Failes to retrieve 'press_key' from userboot instance");
-    let component = Arc::new(kernel::wasm::Component::new(userboot));
 
+    // Creates coral module
+    let vga_buffer =
+        unsafe { Vma::from_raw(NonNull::new(0xb8000 as *mut u8).unwrap(), 80 * 25 * 2) };
+    let vga_idx = ACTIVE_VMA.insert(Arc::new(vga_buffer)).into_externref();
+    let coral_handles_table = vec![vga_idx];
+    let coral_module = kernel::syscalls::build_syscall_module(coral_handles_table);
+
+    // Initialize the Coral native module
+    let runtime = Runtime::new(allocator);
+    let mut component = kernel::wasm::Component::new();
+    let coral_idx = component
+        .add_instance(&coral_module, &runtime)
+        .expect("Failed to instantiate Coral module");
+    component.push_import(String::from("coral"), coral_idx);
+    let userboot_idx = component
+        .add_instance(&user_module, &runtime)
+        .expect("Failed to instantiate coral syscalls module");
+    let userboot_init = component
+        .get_func("init", userboot_idx)
+        .expect("Failed to retrieve 'init' from userboot instance");
+    let userboot_tick = component
+        .get_func("tick", userboot_idx)
+        .expect("Failed to retrieve 'tick' from userboot instance");
+    let userboot_key = component
+        .get_func("press_key", userboot_idx)
+        .expect("Failes to retrieve 'press_key' from userboot instance");
+    let component = Arc::new(component);
+
+    // Schaduler and events
     let scheduler = Arc::new(kernel::scheduler::Scheduler::new());
 
     // Keyboard events

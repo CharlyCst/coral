@@ -97,7 +97,7 @@ unsafe impl WasmType for HandleKind {
         self as u32
     }
 
-    fn from_abi(val: <Self::Abi as wasm::WasmBaseType>::Abi) -> Self {
+    fn from_abi(_val: <Self::Abi as wasm::WasmBaseType>::Abi) -> Self {
         // We should never need that conversion
         todo!();
     }

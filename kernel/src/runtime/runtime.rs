@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use crate::memory::{Vma, VmaAllocator};
 use crate::runtime::{VmaIndex, ACTIVE_VMA};
 use crate::syscalls::ExternRef;
-use wasm::{HeapKind, Instance, Module, ModuleError, RefType, WasmType};
+use wasm::{HeapKind, ModuleError, RefType, WasmType};
 
 use super::KoIndex;
 
@@ -36,14 +36,6 @@ pub struct Runtime {
 impl Runtime {
     pub fn new(alloc: VmaAllocator) -> Self {
         Self { alloc }
-    }
-
-    pub fn instantiate(
-        &self,
-        module: &impl Module,
-        import_from: Vec<(&str, Instance<Area>)>,
-    ) -> Result<Instance<Area>, ModuleError> {
-        Instance::instantiate(module, import_from, self)
     }
 }
 

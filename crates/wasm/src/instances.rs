@@ -1,6 +1,6 @@
-use crate::alloc::boxed::Box;
-use crate::alloc::string::String;
-use crate::alloc::vec::Vec;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::sync::Arc;
 
 use crate::traits::{
     DataSegment, FuncIndex, FuncInfo, FuncPtr, GlobIndex, GlobInfo, GlobInit, HeapIndex, HeapInfo,
@@ -12,6 +12,8 @@ use crate::vmctx::VMContext;
 use collections::{FrozenMap, HashMap};
 
 const PAGE_SIZE: usize = 0x10000; // 64 Ki bytes
+
+type Imports<Area> = FrozenMap<ImportIndex, Arc<Instance<Area>>>;
 
 enum Item<'a, Area: MemoryArea> {
     Func(&'a Func),
@@ -87,7 +89,7 @@ pub struct Instance<Area> {
     globs: FrozenMap<GlobIndex, Glob>,
 
     /// The imported instances.
-    imports: FrozenMap<ImportIndex, Instance<Area>>,
+    imports: FrozenMap<ImportIndex, Arc<Instance<Area>>>,
 
     /// The function types used by the instance.
     types: FrozenMap<TypeIndex, FuncType>,
@@ -103,7 +105,7 @@ impl<Area: MemoryArea> Instance<Area> {
     /// Creates an instance from a module.
     pub fn instantiate<Mod, Ctx>(
         module: &Mod,
-        import_from: Vec<(&str, Instance<Area>)>,
+        import_from: &[(&str, Arc<Instance<Area>>)],
         runtime: &impl Runtime<MemoryArea = Area, Context = Ctx>,
     ) -> ModuleResult<Self>
     where
@@ -113,7 +115,7 @@ impl<Area: MemoryArea> Instance<Area> {
         let items = module.public_items().clone();
         let types = module.types().clone();
 
-        let imports = Self::select_imports(module, import_from)?;
+        let imports = Self::select_imports(module, &import_from)?;
         let funcs = Self::prepare_funcs(module, &imports, &types)?;
         let globs = Self::prepare_globs(module, &imports)?;
         let heaps = Self::allocate_heaps(module, &imports, runtime, &mut ctx)?;
@@ -145,23 +147,16 @@ impl<Area: MemoryArea> Instance<Area> {
     /// Select the imports from the available instances.
     pub fn select_imports<Mod>(
         module: &Mod,
-        import_from: Vec<(&str, Instance<Area>)>,
-    ) -> ModuleResult<FrozenMap<ImportIndex, Instance<Area>>>
+        import_from: &[(&str, Arc<Instance<Area>>)],
+    ) -> ModuleResult<Imports<Area>>
     where
         Mod: Module,
     {
-        let mut import_from = import_from
-            .into_iter()
-            .map(|x| Some(x))
-            .collect::<Vec<Option<(&str, Instance<Area>)>>>();
         module.imports().try_map(|module| {
             // Pick the first matching module
-            for item in import_from.iter_mut() {
-                if let Some((item_name, _)) = item {
-                    if item_name == module {
-                        let (_, instance) = item.take().unwrap();
-                        return Ok(instance);
-                    }
+            for (name, instance) in import_from {
+                if name == module {
+                    return Ok(instance.clone());
                 }
             }
             Err(ModuleError::FailedToInstantiate)
@@ -170,7 +165,7 @@ impl<Area: MemoryArea> Instance<Area> {
 
     fn prepare_funcs<Mod>(
         module: &Mod,
-        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+        imports: &Imports<Area>,
         types: &FrozenMap<TypeIndex, FuncType>,
     ) -> ModuleResult<FrozenMap<FuncIndex, Func>>
     where
@@ -211,7 +206,7 @@ impl<Area: MemoryArea> Instance<Area> {
 
     fn prepare_globs<Mod>(
         module: &Mod,
-        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+        imports: &Imports<Area>,
     ) -> ModuleResult<FrozenMap<GlobIndex, Glob>>
     where
         Mod: Module,
@@ -241,7 +236,7 @@ impl<Area: MemoryArea> Instance<Area> {
 
     fn allocate_heaps<Mod, Ctx>(
         module: &Mod,
-        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+        imports: &Imports<Area>,
         runtime: &impl Runtime<MemoryArea = Area, Context = Ctx>,
         ctx: &mut Ctx,
     ) -> ModuleResult<FrozenMap<HeapIndex, Heap<Area>>>
@@ -296,7 +291,7 @@ impl<Area: MemoryArea> Instance<Area> {
 
     fn allocate_tables<Mod, Ctx>(
         module: &Mod,
-        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+        imports: &Imports<Area>,
         runtime: &impl Runtime<MemoryArea = Area, Context = Ctx>,
         ctx: &mut Ctx,
     ) -> ModuleResult<FrozenMap<TableIndex, Table>>
@@ -333,7 +328,7 @@ impl<Area: MemoryArea> Instance<Area> {
 
     fn allocate_code<Mod, Ctx>(
         module: &Mod,
-        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+        imports: &Imports<Area>,
         funcs: &FrozenMap<FuncIndex, Func>,
         runtime: &impl Runtime<MemoryArea = Area, Context = Ctx>,
         ctx: &mut Ctx,
@@ -468,7 +463,7 @@ impl<Area: MemoryArea> Instance<Area> {
         code: &mut [u8],
         relocs: &[Reloc],
         funcs: &FrozenMap<FuncIndex, Func>,
-        imports: &FrozenMap<ImportIndex, Instance<Area>>,
+        imports: &Imports<Area>,
     ) -> ModuleResult<()> {
         for reloc in relocs {
             let base = match reloc.item {

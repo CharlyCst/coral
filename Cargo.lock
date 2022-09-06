@@ -424,6 +424,7 @@ version = "0.1.0"
 dependencies = [
  "bootloader",
  "conquer-once",
+ "coral-collections",
  "coral-compiler",
  "coral-wasm",
  "crossbeam-queue",

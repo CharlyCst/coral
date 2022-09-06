@@ -8,6 +8,7 @@ edition = "2021"
 # Internal Dependencies
 wasm = { package = "coral-wasm", path = "../crates/wasm" }
 compiler = { package = "coral-compiler", path = "../crates/compiler" }
+collections = { package = "coral-collections", path = "../crates/collections" }
 
 # External Dependencies
 bootloader = { version = "0.9.21", features = ["map_physical_memory"] }
