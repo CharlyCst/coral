@@ -4,20 +4,23 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::asm;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::kprintln;
 use crate::memory::Vma;
-use crate::runtime::Runtime;
+use crate::runtime::get_runtime;
 use crate::scheduler::Task;
 use collections::{entity_impl, PrimaryMap};
 use wasm::{FuncIndex, Instance, Module, ModuleResult};
 
+use spin::{Mutex, MutexGuard};
+
 pub struct Component {
+    inner: Mutex<InnerComponent>,
+}
+
+struct InnerComponent {
     /// The instancees within this component.
     instances: PrimaryMap<InstanceIndex, Arc<Instance<Arc<Vma>>>>,
-    /// Is the component runing?
-    busy: AtomicBool,
     /// The available imports for the next module instantiation.
     next_imports: Vec<(String, Arc<Instance<Arc<Vma>>>)>,
 }
@@ -48,35 +51,35 @@ impl RunStatus {
 impl Component {
     pub fn new() -> Self {
         let component = Self {
-            instances: PrimaryMap::new(),
-            busy: AtomicBool::new(false),
-            next_imports: Vec::new(),
+            inner: Mutex::new(InnerComponent {
+                instances: PrimaryMap::new(),
+                next_imports: Vec::new(),
+            }),
         };
 
         component
     }
 
     /// Add an import, which can be used by instances during future instantiations.
-    pub fn push_import(&mut self, name: String, idx: InstanceIndex) {
-        let instance = self.instances[idx].clone();
-        self.next_imports.push((name, instance));
+    pub fn push_import(&self, name: String, idx: InstanceIndex) {
+        let mut component = self.lock();
+        let instance = Arc::clone(&component.instances[idx]);
+        component.next_imports.push((name, instance));
     }
 
     /// Add an instance to this component.
-    pub fn add_instance(
-        &mut self,
-        module: &impl Module,
-        runtime: &Runtime,
-    ) -> ModuleResult<InstanceIndex> {
+    pub fn add_instance(&self, module: &impl Module) -> ModuleResult<InstanceIndex> {
+        let runtime = get_runtime();
+        let mut component = self.lock();
         // TODO: find a more elegant way of resolving imports
-        let imports: Vec<(&str, Arc<Instance<Arc<Vma>>>)> = self
+        let imports: Vec<(&str, Arc<Instance<Arc<Vma>>>)> = component
             .next_imports
             .iter()
             .map(|(name, instance)| (name.as_str(), instance.clone()))
             .collect();
         let instance = Arc::new(Instance::instantiate(module, &imports, runtime)?);
-        let idx = self.instances.push(instance);
-        if let Some(func) = self.instances[idx].get_start() {
+        let idx = component.instances.push(instance);
+        if let Some(func) = component.instances[idx].get_start() {
             let func = ComponentFunc {
                 instance: idx,
                 func,
@@ -86,6 +89,7 @@ impl Component {
                 RunStatus::Busy => {
                     // TODO: How can we run init while the component is already executing?
                     kprintln!("WARNING: component is buzy, instance can't be initialized");
+                    todo!("Handle buzy component initialization");
                 }
             }
         }
@@ -94,35 +98,50 @@ impl Component {
 
     /// Get a function handle.
     pub fn get_func(&self, func: &str, instance: InstanceIndex) -> Option<ComponentFunc> {
-        match self.instances[instance].get_func_index_by_name(func) {
+        let component = self.lock();
+        match component.instances[instance].get_func_index_by_name(func) {
             Some(func) => Some(ComponentFunc { instance, func }),
             None => None,
         }
     }
 
     pub fn try_run(&self, func: ComponentFunc, args: &Args) -> RunStatus {
-        // Try to acquire component
-        if self
-            .busy
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            == Err(false)
-        {
-            return RunStatus::Busy;
-        }
+        let mut component = match self.inner.try_lock() {
+            Some(inner) => inner,
+            None => {
+                return RunStatus::Busy;
+            }
+        };
 
-        self.call(func, args);
+        component.call(func, args);
 
-        // Release component
-        self.busy.store(false, Ordering::SeqCst);
         RunStatus::Ok
     }
 
+    pub fn run(self: Arc<Self>, func: ComponentFunc, args: Args) -> Task {
+        Task::new(self.run_promise(func, args))
+    }
+
+    /// Run the given function from a component.
+    async fn run_promise(self: Arc<Self>, func: ComponentFunc, args: Args) {
+        match self.try_run(func, &args) {
+            RunStatus::Ok => {}
+            RunStatus::Busy => todo!("Handle busy components"),
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<InnerComponent> {
+        self.inner.lock()
+    }
+}
+
+impl InnerComponent {
     /// Call an instance function using the SytemV ABI.
     ///
     /// See [OsDev wiki](https://wiki.osdev.org/System_V_ABI), [(old but rendered)
     /// spec](https://www.uclibc.org/docs/psABI-x86_64.pdf), and [newer
     /// spec](https://gitlab.com/x86-psABIs).
-    fn call(&self, func: ComponentFunc, args: &Args) {
+    fn call(&mut self, func: ComponentFunc, args: &Args) {
         let args = args.as_slice();
 
         // Instance pointers
@@ -202,18 +221,6 @@ impl Component {
                 out("r10") _,
                 out("r11") _,
             );
-        }
-    }
-
-    pub fn run(self: Arc<Self>, func: ComponentFunc, args: Args) -> Task {
-        Task::new(self.run_promise(func, args))
-    }
-
-    /// Run the given function from a component.
-    async fn run_promise(self: Arc<Self>, func: ComponentFunc, args: Args) {
-        match self.try_run(func, &args) {
-            RunStatus::Ok => {}
-            RunStatus::Busy => todo!("Handle busy components"),
         }
     }
 }

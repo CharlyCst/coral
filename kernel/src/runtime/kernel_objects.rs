@@ -9,6 +9,7 @@ use core::marker::PhantomData;
 
 use crate::memory::Vma;
 use crate::syscalls::ExternRef;
+use crate::wasm::Component;
 use wasm::WasmModule;
 
 use spin::Mutex;
@@ -17,7 +18,12 @@ use spin::Mutex;
 pub static ACTIVE_VMA: KernelObjectCollection<Vma, VmaIndex> = KernelObjectCollection::new();
 
 /// The currently active WebAssembly modules.
-pub static ACTIVE_MODULES: KernelObjectCollection<WasmModule, ModuleIndex>= KernelObjectCollection::new();
+pub static ACTIVE_MODULES: KernelObjectCollection<WasmModule, ModuleIndex> =
+    KernelObjectCollection::new();
+
+/// The currently active components.
+pub static ACTIVE_COMPONENTS: KernelObjectCollection<Component, ComponentIndex> =
+    KernelObjectCollection::new();
 
 /// A collection of kernel objects.
 pub struct KernelObjectCollection<Obj, Idx> {
@@ -74,32 +80,30 @@ pub struct VmaIndex(u32);
 #[derive(Debug, Clone, Copy)]
 pub struct ModuleIndex(u32);
 
-impl KoIndex for VmaIndex {
-    fn from(index: usize) -> Self {
-        let idx = u32::try_from(index).expect("Invalid VMA index");
-        VmaIndex(idx)
-    }
+/// An index representing a component.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy)]
+pub struct ComponentIndex(u32);
 
-    fn into_usize(self) -> usize {
-        self.0 as usize
-    }
+macro_rules! impl_ko_index {
+    ($index:ident, $handle:tt, $error:expr) => {
+        impl KoIndex for $index {
+            fn from(index: usize) -> Self {
+                let idx = u32::try_from(index).expect($error);
+                Self(idx)
+            }
 
-    fn into_externref(self) -> ExternRef {
-        ExternRef::Vma(self)
-    }
+            fn into_usize(self) -> usize {
+                self.0 as usize
+            }
+
+            fn into_externref(self) -> ExternRef {
+                ExternRef::$handle(self)
+            }
+        }
+    };
 }
 
-impl KoIndex for ModuleIndex {
-    fn from(index: usize) -> Self {
-        let idx = u32::try_from(index).expect("Invalid module index");
-        ModuleIndex(idx)
-    }
-
-    fn into_usize(self) -> usize {
-        self.0 as usize
-    }
-
-    fn into_externref(self) -> ExternRef {
-        ExternRef::Module(self)
-    }
-}
+impl_ko_index!(VmaIndex, Vma, "Invalid VMA index");
+impl_ko_index!(ModuleIndex, Module, "Invalid module index");
+impl_ko_index!(ComponentIndex, Component, "Invalid component index");

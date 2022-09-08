@@ -8,8 +8,12 @@ use alloc::vec::Vec;
 use core::mem;
 
 use crate::memory::Vma;
-use crate::runtime::{compile, KoIndex, ModuleIndex, VmaIndex, ACTIVE_MODULES, ACTIVE_VMA};
-use wasm::{as_native_func, ExternRef64, NativeModule, NativeModuleBuilder, WasmType};
+use crate::runtime::compile;
+use crate::runtime::{
+    ComponentIndex, KoIndex, ModuleIndex, VmaIndex, ACTIVE_COMPONENTS, ACTIVE_MODULES, ACTIVE_VMA,
+};
+use crate::wasm::Component;
+use wasm::{as_native_func, ExternRef64, NativeModule, NativeModuleBuilder, WasmModule, WasmType};
 
 // ————————————————————————————— Native Module —————————————————————————————— //
 
@@ -20,6 +24,11 @@ pub fn build_syscall_module(handles_table: Vec<ExternRef>) -> NativeModule {
             .add_func(String::from("handle_kind"), &HANDLE_KIND)
             .add_func(String::from("vma_write"), &VMA_WRITE)
             .add_func(String::from("module_create"), &MODULE_CREATE)
+            .add_func(String::from("component_ceate"), &COMPONENT_CREATE)
+            .add_func(
+                String::from("component_add_instance"),
+                &COMPONENT_ADD_INSTANCE,
+            )
             .add_table(String::from("handles"), handles_table)
             .build()
     }
@@ -37,6 +46,8 @@ pub enum ExternRef {
     Vma(VmaIndex),
     /// A WebAssembly module.
     Module(ModuleIndex),
+    /// A component.
+    Component(ComponentIndex),
 }
 
 /// This value is used to assert a compile time that ExternRef is 8 bytes long.
@@ -88,6 +99,7 @@ pub enum HandleKind {
     Invalid = 0,
     Vma = 1,
     Module = 2,
+    Component = 3,
 }
 
 unsafe impl WasmType for HandleKind {
@@ -111,6 +123,7 @@ fn handle_kind(handle: ExternRef) -> HandleKind {
         ExternRef::Invalid => HandleKind::Invalid,
         ExternRef::Vma(_) => HandleKind::Vma,
         ExternRef::Module(_) => HandleKind::Module,
+        ExternRef::Component(_) => HandleKind::Component,
     }
 }
 
@@ -133,6 +146,36 @@ fn module_create(source: ExternRef, offset: u64, size: u64) -> (SyscallResult, E
 
     let handle = ACTIVE_MODULES.insert(module).into_externref();
     (SyscallResult::Success, handle)
+}
+
+as_native_func!(component_create; COMPONENT_CREATE; ret: (SyscallResult, ExternRef));
+fn component_create() -> (SyscallResult, ExternRef) {
+    let component = Arc::new(Component::new());
+    let handle = ACTIVE_COMPONENTS.insert(component).into_externref();
+    (SyscallResult::Success, handle)
+}
+
+as_native_func!(
+    component_add_instance;
+    COMPONENT_ADD_INSTANCE;
+    args: ExternRef ExternRef;
+    ret: (SyscallResult, u32)
+);
+fn component_add_instance(component: ExternRef, module: ExternRef) -> (SyscallResult, u32) {
+    let component = match get_component(component) {
+        Ok(component) => component,
+        Err(err) => return (err, 0),
+    };
+
+    let module = match get_module(module) {
+        Ok(module) => module,
+        Err(err) => return (err, 0),
+    };
+
+    match component.add_instance(module.as_ref()) {
+        Ok(idx) => (SyscallResult::Success, idx.as_u32()),
+        Err(_) => (SyscallResult::InvalidParams, 0),
+    }
 }
 
 as_native_func!(vma_write; VMA_WRITE; args: ExternRef ExternRef u64 u64 u64; ret: SyscallResult);
@@ -166,6 +209,42 @@ fn vma_write(
 }
 
 // ————————————————————————————————— Utils —————————————————————————————————— //
+
+/// Returns the component corresponding to the given handle, if any.
+fn get_component(handle: ExternRef) -> Result<Arc<Component>, SyscallResult> {
+    let component_idx = match handle {
+        ExternRef::Component(component) => component,
+        _ => {
+            crate::kprintln!("Syscall Error: expected component, got '{:?}'", handle);
+            return Err(SyscallResult::InvalidParams);
+        }
+    };
+    match ACTIVE_COMPONENTS.get(component_idx) {
+        Some(component) => Ok(component),
+        None => {
+            crate::kprintln!("Syscall Error: component does not exists");
+            Err(SyscallResult::InvalidParams)
+        }
+    }
+}
+
+/// Returns the module corresponding to the given handle, if any.
+fn get_module(handle: ExternRef) -> Result<Arc<WasmModule>, SyscallResult> {
+    let module_idx = match handle {
+        ExternRef::Module(module) => module,
+        _ => {
+            crate::kprintln!("Syscall Error: expected module , got '{:?}'", handle);
+            return Err(SyscallResult::InvalidParams);
+        }
+    };
+    match ACTIVE_MODULES.get(module_idx) {
+        Some(module) => Ok(module),
+        None => {
+            crate::kprintln!("Syscall Error: component does not exists");
+            Err(SyscallResult::InvalidParams)
+        }
+    }
+}
 
 /// Returns the VMA corresponding to the given handle, if any.
 fn get_vma(handle: ExternRef) -> Result<Arc<Vma>, SyscallResult> {

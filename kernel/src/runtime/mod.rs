@@ -6,13 +6,41 @@
 mod kernel_objects;
 mod runtime;
 
-pub use kernel_objects::{KoIndex, ModuleIndex, VmaIndex, ACTIVE_MODULES, ACTIVE_VMA};
+use crate::memory::VmaAllocator;
+pub use kernel_objects::{
+    ComponentIndex, KoIndex, ModuleIndex, VmaIndex, ACTIVE_COMPONENTS, ACTIVE_MODULES, ACTIVE_VMA,
+};
 pub use runtime::Runtime;
 
 use alloc::boxed::Box;
 use conquer_once::OnceCell;
 
 use wasm::WasmModule;
+
+// ————————————————————————————— Global Runtime ————————————————————————————— //
+
+static RUNTIME: OnceCell<Runtime> = OnceCell::uninit();
+
+/// Initializes the global runtime.
+///
+/// This is required before instantiating and running WebAssembly instances.
+pub fn init(alloc: VmaAllocator) {
+    RUNTIME
+        .try_init_once(|| Runtime::new(alloc))
+        .expect("The runtime must be initialized only once");
+}
+
+/// Returns the global runtime.
+///
+/// This operation panics if the runtime has not yet been initialized.
+pub fn get_runtime() -> &'static Runtime {
+    match RUNTIME.try_get() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            panic!("The runtime must be initialized before instantiating or calling WebAssembly modules")
+        }
+    }
+}
 
 // ——————————————————————— Optionnal Compiler Support ——————————————————————— //
 

@@ -14,7 +14,7 @@ use core::ptr::NonNull;
 use compiler::{Compiler, X86_64Compiler};
 use kernel::kprintln;
 use kernel::memory::Vma;
-use kernel::runtime::{KoIndex, Runtime, ACTIVE_VMA};
+use kernel::runtime::{KoIndex, ACTIVE_VMA};
 use kernel::wasm::Args;
 
 /// The first user program to run, expected to boostrap userspace.
@@ -43,6 +43,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
             .compile()
             .map_err(|err| kprintln!("Failed to compule: {:?}", err))
     });
+    kernel::runtime::init(allocator);
     kernel::runtime::register_compiler(compiler);
 
     // Compile & initialize userboot
@@ -60,14 +61,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let coral_module = kernel::syscalls::build_syscall_module(coral_handles_table);
 
     // Initialize the Coral native module
-    let runtime = Runtime::new(allocator);
-    let mut component = kernel::wasm::Component::new();
+    let component = kernel::wasm::Component::new();
     let coral_idx = component
-        .add_instance(&coral_module, &runtime)
+        .add_instance(&coral_module)
         .expect("Failed to instantiate Coral module");
     component.push_import(String::from("coral"), coral_idx);
     let userboot_idx = component
-        .add_instance(&user_module, &runtime)
+        .add_instance(&user_module)
         .expect("Failed to instantiate coral syscalls module");
     let userboot_init = component
         .get_func("init", userboot_idx)
