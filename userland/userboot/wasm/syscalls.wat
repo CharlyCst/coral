@@ -30,6 +30,20 @@
       (param $size   i64)
       (result i32)
       (result i32)))
+  (type $component_create
+    (func (result i32 externref)))
+  (type $pub_component_create
+    (func (result i32 i32)))
+  (type $component_add_instance
+    (func
+      (param $component externref)
+      (param $module    externref)
+      (result i32 i32)))
+  (type $pub_component_add_instance
+    (func
+      (param $component i32)
+      (param $module    i32)
+      (result i32 i32)))
 
   ;; Imports
   (import "coral" "vma_write"
@@ -38,13 +52,21 @@
   (import "coral" "module_create"
     (func $module_create
       (type $module_create)))
+  (import "coral" "component_create"
+    (func $component_create
+      (type $component_create)))
+  (import "coral" "component_add_instance"
+    (func $component_add_instance
+      (type $component_add_instance)))
   (import "coral" "handles"
     (table $handles 2 4 externref))
 
   ;; Definitions
-  (table $vma    4 externref)
-  (table $module 4 externref)
-  (global $nb_modules (mut i32) (i32.const 0))
+  (table $vma       4 externref)
+  (table $module    4 externref)
+  (table $component 4 externref)
+  (global $nb_modules    (mut i32) (i32.const 0))
+  (global $nb_components (mut i32) (i32.const 0))
 
   (func $pub_vma_write
     (export "vma_write")
@@ -80,4 +102,33 @@
 
       ;; Store the module handle
       table.set $module)
+
+  (func $pub_component_create
+    (export "component_create")
+    (type $pub_component_create)
+      ;; Prepare index in module table
+      global.get $nb_components ;; return value
+      global.get $nb_components ;; used by table.set
+
+      ;; Increment number of components
+      global.get $nb_modules
+      i32.const 1
+      i32.add
+      global.set $nb_components
+
+      ;; Execute syscall
+      call $component_create
+
+      ;; Store component handle
+      table.set $component)
+
+  (func $pub_component_add_instance
+    (export "component_add_instance")
+    (type $pub_component_add_instance)
+      local.get 0
+      table.get $component
+      local.get 1
+      table.get $module
+      call $component_add_instance
+    )
 )

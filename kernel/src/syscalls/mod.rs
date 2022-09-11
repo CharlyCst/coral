@@ -24,7 +24,7 @@ pub fn build_syscall_module(handles_table: Vec<ExternRef>) -> NativeModule {
             .add_func(String::from("handle_kind"), &HANDLE_KIND)
             .add_func(String::from("vma_write"), &VMA_WRITE)
             .add_func(String::from("module_create"), &MODULE_CREATE)
-            .add_func(String::from("component_ceate"), &COMPONENT_CREATE)
+            .add_func(String::from("component_create"), &COMPONENT_CREATE)
             .add_func(
                 String::from("component_add_instance"),
                 &COMPONENT_ADD_INSTANCE,

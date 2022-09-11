@@ -45,6 +45,10 @@ impl ColorCode {
             color_code: self,
         }
     }
+
+    pub fn with_foreground(self, color: Color) -> Self {
+        Self((self.0 & 0xF0) | color as u8)
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -74,11 +78,24 @@ pub fn write_char(c: ScreenChar, x: usize, y: usize) {
     }
 }
 
+/// Write a string to the internal buffer.
+pub fn write_str(string: &str, color: ColorCode, x: usize, y: usize) -> usize {
+    let mut x = x;
+    for c in string.chars() {
+        if x >= BUFFER_WIDTH {
+            break; // Off screen
+        }
+        if c.is_ascii() {
+            write_char(color.char(c as u8), x, y);
+            x += 1
+        }
+    }
+    x
+}
+
 /// Display the buffer to the screen.
 pub fn flush() {
     unsafe {
         syscalls::vma_write(0, 0, BUFFER.as_ptr() as u64, 0, BUFFER.len() as u64);
     }
 }
-
-
