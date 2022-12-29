@@ -1,8 +1,8 @@
 diff --git a/compiler/rustc_target/src/spec/mod.rs b/compiler/rustc_target/src/spec/mod.rs
-index 832eeec3e8b..56827bdab60 100644
+index 8909cf33af9..c4af827c5be 100644
 --- a/compiler/rustc_target/src/spec/mod.rs
 +++ b/compiler/rustc_target/src/spec/mod.rs
-@@ -1029,6 +1029,8 @@ fn $module() {
+@@ -1245,6 +1245,8 @@ fn $module() {
      ("x86_64-unknown-none", x86_64_unknown_none),
  
      ("mips64-openwrt-linux-musl", mips64_openwrt_linux_musl),
@@ -11,72 +11,23 @@ index 832eeec3e8b..56827bdab60 100644
  }
  
  /// Cow-Vec-Str: Cow<'static, [Cow<'static, str>]>
-diff --git a/compiler/rustc_target/src/spec/x86_64_coral_unknown_kernel.rs b/compiler/rustc_target/src/spec/x86_64_coral_unknown_kernel.rs
-new file mode 100644
-index 00000000000..f1d246d7476
---- /dev/null
-+++ b/compiler/rustc_target/src/spec/x86_64_coral_unknown_kernel.rs
-@@ -0,0 +1,43 @@
-+// Generic x86-64 target for bare-metal code - Floating point disabled
-+//
-+// Can be used in conjunction with the `target-feature` and
-+// `target-cpu` compiler flags to opt-in more hardware-specific
-+// features.
-+//
-+// NOTE: Derived from x86_64_unknown_none.
-+
-+use super::{Endian, LinkerFlavor, LldFlavor, PanicStrategy, Target, TargetOptions};
-+
-+pub fn target() -> Target {
-+    let opts = TargetOptions {
-+        env: "kernel".into(),
-+        vendor: "coral".into(),
-+        os: "unknwon".into(),
-+        cpu: "x86-64".into(),
-+        max_atomic_width: Some(64),
-+        endian: Endian::Little,
-+        c_int_width: "32".into(),
-+
-+        // don't use probe-stack=inline-asm until rust#83139 and rust#84667 are resolved
-+        // stack_probes: StackProbeType::Call,
-+        // position_independent_executables: true,
-+        // static_position_independent_executables: true,
-+        // relro_level: RelroLevel::Full,
-+        // relocation_model: RelocModel::Pic,
-+        linker_flavor: LinkerFlavor::Lld(LldFlavor::Ld),
-+        linker: Some("rust-lld".into()),
-+        features: "-mmx,-sse,+soft-float".into(),
-+        executables: true,
-+        disable_redzone: true,
-+        panic_strategy: PanicStrategy::Abort,
-+        // code_model: Some(CodeModel::Kernel),
-+        ..Default::default()
-+    };
-+    Target {
-+        llvm_target: "x86_64-unknown-none".into(),
-+        pointer_width: 64,
-+        data_layout: "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128".into(),
-+        arch: "x86_64".into(),
-+        options: opts,
-+    }
-+}
 diff --git a/library/std/build.rs b/library/std/build.rs
-index 43168e77296..b4a18d40452 100644
+index 8b1a06ee750..99c252bf115 100644
 --- a/library/std/build.rs
 +++ b/library/std/build.rs
-@@ -29,6 +29,7 @@ fn main() {
-         || target.contains("asmjs")
+@@ -31,6 +31,7 @@ fn main() {
          || target.contains("espidf")
          || target.contains("solid")
+         || target.contains("nintendo-3ds")
 +        || target.contains("coral")
      {
          // These platforms don't have any special requirements.
      } else {
 diff --git a/library/std/src/alloc.rs b/library/std/src/alloc.rs
-index 63c527b64da..8fd9ddaa4c6 100644
+index 61c1ff578b2..e9d0d85e49b 100644
 --- a/library/std/src/alloc.rs
 +++ b/library/std/src/alloc.rs
-@@ -327,7 +327,7 @@ fn default_alloc_error_hook(layout: Layout) {
+@@ -344,7 +344,7 @@ fn default_alloc_error_hook(layout: Layout) {
      }
  }
  
@@ -86,10 +37,10 @@ index 63c527b64da..8fd9ddaa4c6 100644
  #[alloc_error_handler]
  #[unstable(feature = "alloc_internals", issue = "none")]
 diff --git a/library/std/src/collections/hash/map.rs b/library/std/src/collections/hash/map.rs
-index 977714281fb..52ee0dbb531 100644
+index 708edc5de47..b41f69366b8 100644
 --- a/library/std/src/collections/hash/map.rs
 +++ b/library/std/src/collections/hash/map.rs
-@@ -2933,10 +2933,17 @@ impl RandomState {
+@@ -3106,10 +3106,17 @@ impl RandomState {
      /// ```
      #[inline]
      #[allow(deprecated)]
@@ -108,10 +59,10 @@ index 977714281fb..52ee0dbb531 100644
          // simply always called `rand::thread_rng().gen()` twice. In #31356 it
          // was discovered, however, that because we re-seed the thread-local RNG
 diff --git a/library/std/src/panicking.rs b/library/std/src/panicking.rs
-index f1baf077580..36728790526 100644
+index d4976a469cc..f7810053285 100644
 --- a/library/std/src/panicking.rs
 +++ b/library/std/src/panicking.rs
-@@ -527,7 +527,7 @@ pub fn panicking() -> bool {
+@@ -518,7 +518,7 @@ pub fn panicking() -> bool {
  }
  
  /// Entry point of panics from the libcore crate (`panic_impl` lang item).
@@ -120,84 +71,8 @@ index f1baf077580..36728790526 100644
  #[panic_handler]
  pub fn begin_panic_handler(info: &PanicInfo<'_>) -> ! {
      struct PanicPayload<'a> {
-diff --git a/library/std/src/sys/coral/env.rs b/library/std/src/sys/coral/env.rs
-new file mode 100644
-index 00000000000..7117a9db0ec
---- /dev/null
-+++ b/library/std/src/sys/coral/env.rs
-@@ -0,0 +1,9 @@
-+pub mod os {
-+    pub const FAMILY: &str = "coral";
-+    pub const OS: &str = "";
-+    pub const DLL_PREFIX: &str = "";
-+    pub const DLL_SUFFIX: &str = "";
-+    pub const DLL_EXTENSION: &str = "";
-+    pub const EXE_SUFFIX: &str = "";
-+    pub const EXE_EXTENSION: &str = "";
-+}
-diff --git a/library/std/src/sys/coral/mod.rs b/library/std/src/sys/coral/mod.rs
-new file mode 100644
-index 00000000000..98e995f0992
---- /dev/null
-+++ b/library/std/src/sys/coral/mod.rs
-@@ -0,0 +1,55 @@
-+//! System bindings for the coral kernel
-+//!
-+//! This module contains the facade (aka platform-specific) implementations of OS level
-+//! functionality for the coral kernel.
-+//!
-+//! This is all super highly experimental and not actually intended for wide/production use yet,
-+//! it's still all in the experimental category. This will likely change over time.
-+//!
-+//! Currently all functions here are basically stubs that immediately return errors. The hope is
-+//! that with a portability lint we can just remove all this and just omit parts of the standard
-+//! library if we're compiling for the coral kernel. That way it's a compile time error for
-+//! something that's guaranteed to be a runtime error!
-+
-+#![deny(unsafe_op_in_unsafe_fn)]
-+
-+#[path = "../unsupported/alloc.rs"]
-+pub mod alloc;
-+#[path = "../unsupported/args.rs"]
-+pub mod args;
-+#[path = "../unix/cmath.rs"]
-+pub mod cmath;
-+pub mod env;
-+#[path = "../unsupported/fs.rs"]
-+pub mod fs;
-+#[path = "../unsupported/io.rs"]
-+pub mod io;
-+#[path = "../unsupported/net.rs"]
-+pub mod net;
-+#[path = "../unsupported/os.rs"]
-+pub mod os;
-+#[path = "../unix/os_str.rs"]
-+pub mod os_str;
-+#[path = "../unix/path.rs"]
-+pub mod path;
-+#[path = "../unsupported/pipe.rs"]
-+pub mod pipe;
-+#[path = "../unsupported/process.rs"]
-+pub mod process;
-+#[path = "../unsupported/stdio.rs"]
-+pub mod stdio;
-+#[path = "../unsupported/thread_local_dtor.rs"]
-+pub mod thread_local_dtor;
-+#[path = "../unsupported/thread_local_key.rs"]
-+pub mod thread_local_key;
-+#[path = "../unsupported/locks/mod.rs"]
-+pub mod locks;
-+#[path = "../unsupported/time.rs"]
-+pub mod time;
-+#[path = "../unsupported/thread.rs"]
-+pub mod thread;
-+
-+#[path = "../unsupported/common.rs"]
-+#[deny(unsafe_op_in_unsafe_fn)]
-+mod common;
-+pub use common::*;
 diff --git a/library/std/src/sys/mod.rs b/library/std/src/sys/mod.rs
-index 167c918c94c..fcfee9c3821 100644
+index c080c176a2a..5fc58e60719 100644
 --- a/library/std/src/sys/mod.rs
 +++ b/library/std/src/sys/mod.rs
 @@ -43,6 +43,9 @@
@@ -211,21 +86,21 @@ index 167c918c94c..fcfee9c3821 100644
          mod sgx;
          pub use self::sgx::*;
 diff --git a/library/std/src/sys/unsupported/thread_local_dtor.rs b/library/std/src/sys/unsupported/thread_local_dtor.rs
-index 85d66098302..04c7295f0ae 100644
+index 84660ea5881..ac0f4041216 100644
 --- a/library/std/src/sys/unsupported/thread_local_dtor.rs
 +++ b/library/std/src/sys/unsupported/thread_local_dtor.rs
 @@ -1,5 +1,6 @@
  #![unstable(feature = "thread_local_internals", issue = "none")]
  
 +#[allow(dead_code)]
+ #[cfg_attr(target_family = "wasm", allow(unused))] // unused on wasm32-unknown-unknown
  pub unsafe fn register_dtor(_t: *mut u8, _dtor: unsafe extern "C" fn(*mut u8)) {
      // FIXME: right now there is no concept of "thread exit", but this is likely
-     // going to show up at some point in the form of an exported symbol that the
 diff --git a/library/std/src/sys_common/mod.rs b/library/std/src/sys_common/mod.rs
-index 804727fbc54..122d7bc0bd1 100644
+index 8c19f9332dc..760e6c9e810 100644
 --- a/library/std/src/sys_common/mod.rs
 +++ b/library/std/src/sys_common/mod.rs
-@@ -40,6 +40,7 @@
+@@ -49,6 +49,7 @@
      if #[cfg(any(target_os = "l4re",
                   target_os = "hermit",
                   feature = "restricted-std",
@@ -234,10 +109,10 @@ index 804727fbc54..122d7bc0bd1 100644
                   all(target_vendor = "fortanix", target_env = "sgx")))] {
          pub use crate::sys::net;
 diff --git a/src/bootstrap/compile.rs b/src/bootstrap/compile.rs
-index 7a8c7fee5f5..8d98e31f92b 100644
+index e02a10b8164..c9930198938 100644
 --- a/src/bootstrap/compile.rs
 +++ b/src/bootstrap/compile.rs
-@@ -307,6 +307,9 @@ pub fn std_cargo(builder: &Builder<'_>, target: TargetSelection, stage: u32, car
+@@ -343,6 +343,9 @@ pub fn std_cargo(builder: &Builder<'_>, target: TargetSelection, stage: u32, car
      } else {
          let mut features = builder.std_features(target);
          features.push_str(compiler_builtins_c_feature);
@@ -247,8 +122,20 @@ index 7a8c7fee5f5..8d98e31f92b 100644
  
          cargo
              .arg("--features")
+diff --git a/src/bootstrap/lib.rs b/src/bootstrap/lib.rs
+index 7e70e99bb8c..a0d29d46cd9 100644
+--- a/src/bootstrap/lib.rs
++++ b/src/bootstrap/lib.rs
+@@ -210,6 +210,7 @@ pub unsafe fn setup(_build: &mut crate::Build) {}
+     /* Extra values not defined in the built-in targets yet, but used in std */
+     (Some(Mode::Std), "target_env", Some(&["libnx"])),
+     (Some(Mode::Std), "target_os", Some(&["watchos"])),
++    (Some(Mode::Std), "target_vendor", Some(&["coral"])),
+     (
+         Some(Mode::Std),
+         "target_arch",
 diff --git a/src/tools/build-manifest/src/main.rs b/src/tools/build-manifest/src/main.rs
-index 6338e467055..45e82838bea 100644
+index b0006cb90bd..c67c8961cad 100644
 --- a/src/tools/build-manifest/src/main.rs
 +++ b/src/tools/build-manifest/src/main.rs
 @@ -155,6 +155,7 @@
